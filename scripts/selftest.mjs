@@ -381,6 +381,15 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   check('detail returns body + lock', detail.status === 200 && detail.payload.raw?.body.includes('Hello') && detail.payload.lock?.skillPath !== undefined)
   const runtimeDetail = await call('/dsh-tool-explorer/api/skills/runtime-sample')
   check('runtime detail read-only ok', runtimeDetail.status === 200 && runtimeDetail.payload.definition?.content.length > 0)
+
+  // Regression: frontmatter with folded/block scalars must parse (the
+  // JSON_SCHEMA read used to reject it and hide the description).
+  const skillsModule = await import(pathToFileURL(`${lib}/skills.js`).href)
+  const complexFile = join(userSkillsRoot, 'echo-skill', 'SKILL.md')
+  writeFileSync(complexFile, '---\nname: echo-skill\ndescription: Echo test skill\nwhenToUse: |-\n  When the user asks\n  for an echo.\nmetadata:\n  tags: [a, b]\n---\n\n# Echo\nHello\n')
+  const parsedComplex = skillsModule.readSkillFile(complexFile)
+  check('block-scalar frontmatter parses', parsedComplex !== null && parsedComplex.frontmatter.description === 'Echo test skill' && String(parsedComplex.frontmatter.whenToUse).includes('asks'))
+  writeFileSync(complexFile, '---\nname: echo-skill\ndescription: Echo test skill\n---\n\n# Echo\nHello\n')
 }
 
 // ---------- 4.5 git install ecosystem ----------

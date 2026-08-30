@@ -12,7 +12,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { dump, load, JSON_SCHEMA } from 'js-yaml'
+import { dump, load } from 'js-yaml'
 
 /** The exact grammar the filesystem provider enforces (mirrors dsh-skill). */
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
@@ -318,7 +318,10 @@ export function readSkillFile(path: string): ParsedSkillFile | null {
   }
   let frontmatter: Record<string, unknown>
   try {
-    const parsed = load(match[1] ?? '', { schema: JSON_SCHEMA })
+    // Full YAML schema: skill frontmatter routinely uses folded/block
+    // scalars and anchors the SKILL.md format allows; JSON_SCHEMA would
+    // reject them and the description would come back empty.
+    const parsed = load(match[1] ?? '')
     frontmatter = typeof parsed === 'object' && parsed !== null ? parsed as Record<string, unknown> : {}
   } catch {
     return null
