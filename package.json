@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-explorer",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Management console for DeepSeek Harness: browse, install, update, edit and toggle skills; add, edit, test and monitor MCP servers. · DSH 技能与 MCP 管理控制台。",
   "type": "module",
   "main": "lib/index.js",
@@ -65,7 +65,10 @@
       "optional": true
     }
   },
-  "dependencies": {},
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "js-yaml": "^4.1.0"
+  },
   "devDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",
     "@deepseek-ai/dsh-client-locale": "0.1.1-rc.2",
@@ -73,6 +76,7 @@
     "@deepseek-ai/dsh-client-ui-settings": "0.1.1-rc.2",
     "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^24.0.0",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.1",
@@ -82,10 +86,11 @@
     "typescript": "^5.6.3"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsdown && node scripts/wrap-client.mjs",
+    "build": "tsc -p tsconfig.json && tsdown && node scripts/wrap-client.mjs && node scripts/check-client.mjs",
     "build:host": "tsc -p tsconfig.json",
     "build:client": "tsdown && node scripts/wrap-client.mjs",
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "test:self": "node scripts/selftest.mjs",
     "prepack": "npm run build"
   },
   "engines": {

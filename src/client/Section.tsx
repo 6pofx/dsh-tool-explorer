@@ -5,6 +5,7 @@
  */
 
 import { createElement as h, useEffect, useState } from 'react'
+import { McpSection } from './McpSection'
 
 export type Translate = (key: string) => string
 
@@ -114,7 +115,7 @@ export function Section({ t, preferredSubsectionId }: SectionProps) {
       ]),
       tab === 'skills'
         ? h(PlaceholderPanel, { t, label: t('skillsTab') })
-        : h(PlaceholderPanel, { t, label: t('mcpTab') }),
+        : h(McpSection, { t }),
     ]),
   ])
 }

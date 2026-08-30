@@ -13,7 +13,7 @@ import {
   TOOL_EXPLORER_SETTINGS_DEFAULTS,
   type ToolExplorerSettings,
 } from './settings.js'
-import { mountRoutes, type ToolExplorerHost } from './routes.js'
+import { argvProfile, mountRoutes, type ToolExplorerHost } from './routes.js'
 
 export const name = 'dsh-tool-explorer'
 
@@ -28,8 +28,9 @@ export function apply(ctx: Context, config?: Config): void {
   }
   const getSettings = installToolExplorerSettings(ctx, entry)
 
-  ctx.inject(['webServer', 'loader'], (hostCtx: Context) => {
+  ctx.inject(['webServer', 'loader', 'tools'], (hostCtx: Context) => {
     const host = hostCtx as unknown as ToolExplorerHost
+    ;(host as { profileName?: string }).profileName = argvProfile()
     ctx.effect(() => mountRoutes(host, getSettings), 'dsh-tool-explorer: http routes')
   })
 }
