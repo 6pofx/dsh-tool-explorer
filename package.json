@@ -1,0 +1,98 @@
+{
+  "name": "dsh-tool-explorer",
+  "version": "0.1.0",
+  "description": "Management console for DeepSeek Harness: browse, install, update, edit and toggle skills; add, edit, test and monitor MCP servers. · DSH 技能与 MCP 管理控制台。",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/types/index.d.ts",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dsh-tool-explorer/dsh-tool-explorer.git"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "skills",
+    "mcp",
+    "management"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-connection",
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-theme"
+      ],
+      "platform": "web"
+    }
+  },
+  "exports": {
+    ".": {
+      "types": "./lib/types/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "src",
+    "cordis.patch.yml",
+    "LICENSE",
+    "README.md",
+    "README.zh.md"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-settings": "^0.1.0-rc.7 || ^0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-settings": {
+      "optional": true
+    },
+    "@deepseek-ai/schemastery": {
+      "optional": true
+    }
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-runtime": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-client-ui-settings": "0.1.1-rc.2",
+    "@deepseek-ai/dsh-settings": "0.1.1-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1",
+    "@types/node": "^24.0.0",
+    "@types/react": "~18.3.1",
+    "@types/react-dom": "~18.3.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "tsdown": "^0.22.14",
+    "typescript": "^5.6.3"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsdown && node scripts/wrap-client.mjs",
+    "build:host": "tsc -p tsconfig.json",
+    "build:client": "tsdown && node scripts/wrap-client.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.client.json --noEmit",
+    "prepack": "npm run build"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  }
+}

@@ -1,0 +1,20 @@
+# Dependencies
+node_modules/
+
+# Build outputs
+lib/
+client/client.js
+client/client.js.map
+*.tgz
+
+# Reference material
+.ref/
+
+# Editors / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
