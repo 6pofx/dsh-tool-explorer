@@ -13,10 +13,11 @@ import { fileURLToPath } from 'node:url'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readJsonBody, sameOrigin, sendJson } from './http.js'
 import {
-  addServer, listServers, patchFilesView, patchHash, removeServer,
+  addServer, existingServerNames, listServers, patchFilesView, patchHash, patchPathsOf, removeServer,
   serverDetail, testConnection, updateServer, validateSpec,
   type McpHost, type McpServerSpec, type PatchLayer, type WriteOptions,
 } from './mcp.js'
+import { normalizeServerName, scanAgentMcpSources } from './agents-mcp.js'
 import type { ToolExplorerSettings } from './settings.js'
 
 /** Structural subset of the dsh webServer service. */
@@ -103,16 +104,16 @@ function writeOptionsFrom(body: Record<string, unknown>): WriteOptions {
   return { layer, expectedHash }
 }
 
-/** Decode a route path parameter. */
-function param(request: IncomingMessage, prefix: string): string {
+/** Decode a route path parameter (prefix without trailing slash). */
+function param(request: IncomingMessage, prefixNoSlash: string): string {
   const path = request.url ?? ''
-  const at = path.indexOf(prefix)
+  const at = path.indexOf(prefixNoSlash)
   if (at === -1) return ''
-  const raw = path.slice(at + prefix.length).split('?')[0] ?? ''
+  const raw = path.slice(at + prefixNoSlash.length).split('?')[0] ?? ''
   try {
-    return decodeURIComponent(raw)
+    return decodeURIComponent(raw.replace(/^\//u, ''))
   } catch {
-    return raw
+    return raw.replace(/^\//u, '')
   }
 }
 
@@ -165,20 +166,42 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
   disposers.push(host.webServer.register({
     kind: 'exact',
     path: '/dsh-tool-explorer/api/mcp/test',
-    handler: (request, response) => {
+    handler: async (request, response) => {
       if (!requireMethod(request, response, ['POST'])) return
       if (!requireSameOrigin(request, response)) return
-      void handleTestServer(request, response)
+      await handleTestServer(request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/mcp/import-sources',
+    handler: (request, response) => {
+      if (!requireMethod(request, response, ['GET'])) return
+      handleImportSources(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/mcp/import',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleImport(host, request, response)
     },
   }))
 
   disposers.push(host.webServer.register({
     kind: 'prefix',
-    path: '/dsh-tool-explorer/api/mcp/',
+    // NOTE: the webserver matches `pathname.startsWith(prefix + '/')` — the
+    // registered prefix must NOT end with a slash, or the joined pattern
+    // gets a double slash and never matches.
+    path: '/dsh-tool-explorer/api/mcp',
     handler: async (request, response) => {
-      const id = param(request, '/dsh-tool-explorer/api/mcp/')
-      if (id === '' || id === 'test') {
-        // `test` is an exact route above; never treat it as a server id.
+      const id = param(request, '/dsh-tool-explorer/api/mcp')
+      if (id === '' || id === 'test' || id === 'import-sources' || id === 'import') {
+        // These are exact routes above; never treat them as a server id.
         sendJson(response, 404, { error: 'not found' })
         return
       }
@@ -295,5 +318,90 @@ async function handleTestServer(request: IncomingMessage, response: ServerRespon
     sendJson(response, 200, result)
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+// --- cross-agent MCP import ---
+
+function handleImportSources(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): void {
+  const taken = new Set(existingServerNames(host))
+  const sources = scanAgentMcpSources().map(source => ({
+    agent: source.agent,
+    label: source.label,
+    path: source.path,
+    exists: source.exists,
+    servers: source.servers.map(server => {
+      const serverName = normalizeServerName(server.name)
+      return {
+        name: server.name,
+        transport: server.type === 'streamable-http' || server.url !== undefined ? 'streamable-http' : 'stdio',
+        command: server.command,
+        url: server.url,
+        args: server.args,
+        env: server.env,
+        cwd: server.cwd,
+        headers: server.headers,
+        // The name dsh would register this server under, when it differs.
+        renameTo: serverName !== null && serverName !== server.name ? serverName : undefined,
+        conflict: serverName !== null && taken.has(serverName),
+      }
+    }),
+  }))
+  sendJson(response, 200, { ok: true, sources })
+}
+
+async function handleImport(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = (await readJsonBody(request)) as Record<string, unknown>
+    const selections = Array.isArray(body.selections) ? body.selections : []
+    const layer: PatchLayer = body.layer === 'home' ? 'home' : 'profile'
+    const imported: Array<{ name: string; id: string }> = []
+    const skipped: Array<{ name: string; reason: string }> = []
+    // One scan: the import targets the sources the picker just showed.
+    const sources = scanAgentMcpSources()
+    for (const item of selections) {
+      if (typeof item !== 'object' || item === null) continue
+      const targetPath = (item as Record<string, unknown>).path
+      const targetName = (item as Record<string, unknown>).name
+      if (typeof targetPath !== 'string' || typeof targetName !== 'string') {
+        skipped.push({ name: '?', reason: 'invalid selection' })
+        continue
+      }
+      const found = sources.find(source => source.path === targetPath)?.servers.find(server => server.name === targetName)
+      if (found === undefined) {
+        skipped.push({ name: targetName, reason: 'server no longer present in source config' })
+        continue
+      }
+      const serverName = normalizeServerName(found.name)
+      if (serverName === null) {
+        skipped.push({ name: found.name, reason: 'name cannot be normalized onto [A-Za-z0-9_-]{1,32}' })
+        continue
+      }
+      const spec: McpServerSpec = {
+        serverName,
+        transport: found.type === 'streamable-http' || found.url !== undefined ? 'streamable-http' : 'stdio',
+      }
+      if (found.command !== undefined) spec.command = found.command
+      if (found.args !== undefined) spec.args = found.args
+      if (found.env !== undefined) spec.env = found.env
+      if (found.cwd !== undefined) spec.cwd = found.cwd
+      if (found.url !== undefined) spec.url = found.url
+      if (found.headers !== undefined) spec.headers = found.headers
+      const validated = validateSpec(spec)
+      if (!validated.ok) {
+        skipped.push({ name: serverName, reason: validated.errors.join('; ') })
+        continue
+      }
+      const targetPathFile = patchPathsOf(host)[layer]
+      const result = addServer(host, validated.spec, {
+        layer,
+        expectedHash: patchHash(targetPathFile),
+      })
+      if (result.ok) imported.push({ name: serverName, id: result.id })
+      else skipped.push({ name: serverName, reason: result.error })
+    }
+    sendJson(response, 200, { ok: true, imported, skipped, ...mcpListPayload(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
   }
 }

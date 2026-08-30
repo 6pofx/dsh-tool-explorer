@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -99,7 +100,16 @@ export function profilePatchPathOf(host: McpHost): string {
     const cfg = entry.options?.config as { path?: unknown } | undefined
     if (entry.options?.name !== 'cordis:include' || cfg == null || typeof cfg.path !== 'string') continue
     if (!cfg.path.includes('cordis.yml')) continue
-    return cfg.path.replace(/cordis\.yml$/u, 'cordis.patch.yml')
+    let includePath = cfg.path
+    if (includePath.startsWith('file://')) {
+      try {
+        includePath = fileURLToPath(includePath)
+      } catch {
+        // fileURLToPath rejects POSIX-style URLs on Windows; strip the scheme.
+        includePath = includePath.replace(/^file:\/\//u, '')
+      }
+    }
+    return includePath.replace(/cordis\.yml$/u, 'cordis.patch.yml')
   }
   return join(profileDirOf(host), 'cordis.patch.yml')
 }
@@ -274,7 +284,7 @@ const FIBER_PHASE: Record<number, string> = {
 }
 
 /** All serverNames currently configured (loader + both patch layers). */
-function existingServerNames(host: McpHost): string[] {
+export function existingServerNames(host: McpHost): string[] {
   const names = new Set<string>()
   for (const entry of host.loader.entries()) {
     if (entry.options?.name !== MCP_PLUGIN_NAME) continue

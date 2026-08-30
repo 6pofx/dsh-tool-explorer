@@ -69,11 +69,19 @@ function composeRows(text) {
   return base
 }
 
-const routes = new Map()
+const exactRoutes = new Map()
+const prefixRoutes = new Map()
 const host = {
   profileName: 'web',
   dshHome,
-  webServer: { register: r => { routes.set(r.path, r); return () => routes.delete(r.path) } },
+  webServer: {
+    register: r => {
+      const table = r.kind === 'exact' ? exactRoutes : prefixRoutes
+      if (table.has(r.path)) throw new Error(`duplicate ${r.kind} route ${r.path}`)
+      table.set(r.path, r)
+      return () => table.delete(r.path)
+    },
+  },
   loader: { entries: function* () { for (const e of composeRows(readPatch(patchPath))) yield { options: e, disabled: false, fiber: { state: 2 } } } },
   tools: { schemas: () => [ { name: 'mcp__echo__ping', description: 'ping tool', parameters: { properties: { text: {} } } } ] },
 }
@@ -85,9 +93,16 @@ function readPatch(path) {
 const dispose = mountRoutes(host, () => ({ defaultSkillRoot: '~/.agents/skills', mcpConfigTarget: 'profile', previewContentLimit: 20000 }))
 
 async function call(path, { method = 'GET', body, query = '' } = {}) {
-  const route = path === '/dsh-tool-explorer/api/mcp' ? routes.get('/dsh-tool-explorer/api/mcp')
-    : path.startsWith('/dsh-tool-explorer/api/mcp/') ? routes.get('/dsh-tool-explorer/api/mcp/')
-    : routes.get(path)
+  // Mirrors webServer dispatch: exact by pathname, then the longest prefix
+  // whose `prefix + '/'` matches the pathname.
+  const exact = exactRoutes.get(path)
+  let best
+  for (const [prefix, route] of prefixRoutes) {
+    if (path !== prefix && !path.startsWith(prefix + '/')) continue
+    if (best === undefined || prefix.length > best[0].length) best = [prefix, route]
+  }
+  const route = exact ?? best?.[1]
+  if (route === undefined) throw new Error(`no route registered for ${path}`)
   const req = {
     method,
     url: path + query,
@@ -145,7 +160,75 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   check('list empty again', listGone.payload.servers.length === 0)
 }
 
-// ---------- 3. real stdio probe ----------
+// ---------- 3. cross-agent import ----------
+{
+  console.log('routes — cross-agent import')
+  const { scanAgentMcpSources, normalizeServerName } = await import(pathToFileURL(`${lib}/agents-mcp.js`).href)
+  check('normalize: spaces become dashes', normalizeServerName('Everything Server') === 'everything-server')
+  check('normalize: long names truncated', (normalizeServerName('a'.repeat(40)) ?? '').length <= 32)
+  check('normalize: empty rejected', normalizeServerName('!!!') === null)
+
+  const agentHome = join(tmp, 'agent-home')
+  mkdirSync(agentHome, { recursive: true })
+  mkdirSync(join(agentHome, '.codex'), { recursive: true })
+  mkdirSync(join(agentHome, '.cursor'), { recursive: true })
+  writeFileSync(join(agentHome, '.codex', 'config.toml'), [
+    '[mcp_servers.Everything Server]',
+    'command = "npx"',
+    'args = ["-y", "@modelcontextprotocol/server-everything"]',
+    'env = { API_KEY = "x", PORT = 8080 }',
+    '',
+    '[mcp_servers.remote-http]',
+    'url = "https://mcp.example.com/mcp"',
+    'headers = { Authorization = "Bearer t" }',
+  ].join('\n'))
+  writeFileSync(join(agentHome, '.cursor', 'mcp.json'), JSON.stringify({
+    mcpServers: { Filesystem: { command: 'node', args: ['/tmp/fs.js'] } },
+  }))
+
+  const previousHome = process.env.DSH_TE_AGENT_HOME
+  process.env.DSH_TE_AGENT_HOME = agentHome
+  const sources = scanAgentMcpSources()
+  const codex = sources.find(source => source.agent === 'codex' && source.exists)
+  check('codex toml scanned', codex !== undefined && codex.servers.length === 2, JSON.stringify(codex?.servers))
+  const everything = codex?.servers.find(server => server.name === 'Everything Server')
+  check('toml inline table parsed', everything !== undefined && everything.env?.API_KEY === 'x' && everything.env?.PORT === '8080')
+  check('toml http server parsed', codex?.servers.some(server => server.name === 'remote-http' && server.url !== undefined))
+  const cursor = sources.find(source => source.agent === 'cursor' && source.exists)
+  check('cursor json scanned', cursor !== undefined && cursor.servers.length === 1)
+
+  const listBefore = await call('/dsh-tool-explorer/api/mcp')
+  const importRes = await call('/dsh-tool-explorer/api/mcp/import', {
+    method: 'POST',
+    body: {
+      selections: [
+        { path: join(agentHome, '.codex', 'config.toml'), name: 'Everything Server' },
+        { path: join(agentHome, '.codex', 'config.toml'), name: 'remote-http' },
+      ],
+      layer: 'profile',
+      expectedHash: listBefore.payload.files.profile.hash,
+    },
+  })
+  check('import returns 200', importRes.status === 200, JSON.stringify(importRes.payload))
+  check('import converts names', importRes.payload.imported.length === 2
+    && importRes.payload.imported.some(item => item.name === 'everything-server')
+    && importRes.payload.imported.some(item => item.name === 'remote-http'))
+  const listAfterImport = await call('/dsh-tool-explorer/api/mcp')
+  check('imported servers appear (patch rows)', listAfterImport.payload.servers.length === 2)
+  const dupImport = await call('/dsh-tool-explorer/api/mcp/import', {
+    method: 'POST',
+    body: { selections: [{ path: join(agentHome, '.codex', 'config.toml'), name: 'Everything Server' }], layer: 'profile', expectedHash: listAfterImport.payload.files.profile.hash },
+  })
+  check('re-import hits conflict and skips', dupImport.status === 200 && dupImport.payload.skipped.length === 1 && dupImport.payload.imported.length === 0)
+
+  for (const row of ['mcp-everything-server', 'mcp-remote-http']) {
+    const list = await call('/dsh-tool-explorer/api/mcp')
+    await call(`/dsh-tool-explorer/api/mcp/${row}`, { method: 'DELETE', query: `?layer=profile&expectedHash=${list.payload.files.profile.hash}` })
+  }
+  process.env.DSH_TE_AGENT_HOME = previousHome ?? ''
+}
+
+// ---------- 4. real stdio probe ----------
 {
   console.log('routes — real stdio probe')
   // Write the server script into the workspace (.ref is gitignored) so the

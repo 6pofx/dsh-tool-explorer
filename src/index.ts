@@ -29,8 +29,16 @@ export function apply(ctx: Context, config?: Config): void {
   const getSettings = installToolExplorerSettings(ctx, entry)
 
   ctx.inject(['webServer', 'loader', 'tools'], (hostCtx: Context) => {
-    const host = hostCtx as unknown as ToolExplorerHost
-    ;(host as { profileName?: string }).profileName = argvProfile()
+    // The scoped ctx is an active fiber PROXY: setting undeclared properties
+    // on it throws. Read the injected services out into a plain host object
+    // instead — the shape the feature modules consume.
+    const scoped = hostCtx as unknown as ToolExplorerHost
+    const host: ToolExplorerHost = {
+      webServer: scoped.webServer,
+      loader: scoped.loader,
+      tools: scoped.tools,
+      profileName: argvProfile(),
+    }
     ctx.effect(() => mountRoutes(host, getSettings), 'dsh-tool-explorer: http routes')
   })
 }

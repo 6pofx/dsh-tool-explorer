@@ -259,6 +259,16 @@ DSH 是一个 Cordis 插件架构的 Agent Harness。当前生态中：
 | D7 | MCP 写入位置 | 默认当前 profile 的 `cordis.patch.yml`；home 全局仅高级选项 |
 | D8 | 里程碑顺序 | M1 先做 MCP，再 skills |
 | D9 | 插件通信 | `webServer` 路由 + 同源 fetch（仿 dshmarket），settings namespace 存偏好 |
+| D10 | 跨 agent MCP 导入 | 扫描本机其他 agent 配置（Claude Code `~/.claude.json`、Cursor `~/.cursor/mcp.json`、Codex `~/.codex/config.toml`、Cline/Roo/Continue/Windsurf），规范化后经标准添加管线导入（已实现于 M1.1） |
+| D11 | 表单形态 | 内联面板（非弹窗）——像素色全部继承设置页主题，修复黑底黑字问题 |
+
+### 里程碑状态
+
+| 里程碑 | 状态 |
+|---|---|
+| M0 骨架 | ✅ 完成（设置页可见、构建管线、bundle 加载） |
+| M1 MCP 管理 | ✅ 完成 + 1.1 增强：**修复 host 挂在 Cordis Proxy 上的赋值 bug**（表现为全路由静默 404）、**prefix 路由不带尾斜杠**（webserver 匹配语义为 `prefix + '/'`）；表单改内联面板；**跨 agent MCP 导入（D10）已实现**（JSON + Codex TOML 子集解析、名称规范化、冲突跳过）；真实 boot 端到端验证：添加→HMR 热生效（active / 1 tool）→删除→patch 恢复 `[]` |
+| M2/M3 Skills | 未开始 |
 
 > 待定：包名是否可用（`dsh-tool-explorer` 或 scoped `@<user>/dsh-tool-explorer`，M0 落定时用 npm 查重）。
 
