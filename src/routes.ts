@@ -19,7 +19,7 @@ import {
 } from './mcp.js'
 import { normalizeServerName, scanAgentMcpSources } from './agents-mcp.js'
 import {
-  createSkill, isSkillName, listSkills, readSkillFile, readSkillLock, setSkillEnabled,
+  agentScopeOf, createSkill, invalidateSkillCache, isSkillName, listSkills, readSkillFile, readSkillLock, setSkillEnabled,
   updateSkill, type SkillsHost,
 } from './skills.js'
 import {
@@ -516,7 +516,10 @@ async function handleSkillDetail(host: ToolExplorerHost, request: IncomingMessag
   }
   try {
     const summary = (await listSkills(host)).skills.find(item => item.name === name) ?? null
-    const definition = await host.skills.get(name)
+    const scope = agentScopeOf(host)
+    const definition = scope === undefined
+      ? await host.skills.get(name)
+      : await host.skills.get(name, { scope })
     if (definition === undefined && summary === null) {
       sendJson(response, 404, { error: `skill "${name}" not found` })
       return
@@ -556,6 +559,7 @@ async function handleCreateSkill(host: ToolExplorerHost, request: IncomingMessag
       sendJson(response, 400, { error: result.errors.join('; ') })
       return
     }
+    invalidateSkillCache()
     sendJson(response, 200, { ok: true, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -572,6 +576,7 @@ async function handleUpdateSkill(host: ToolExplorerHost, request: IncomingMessag
       sendJson(response, 400, { error: result.errors.join('; ') })
       return
     }
+    invalidateSkillCache()
     sendJson(response, 200, { ok: true, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -587,6 +592,7 @@ async function handleToggleSkill(host: ToolExplorerHost, request: IncomingMessag
       sendJson(response, 400, { error: result.error })
       return
     }
+    invalidateSkillCache()
     sendJson(response, 200, { ok: true, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
@@ -630,6 +636,7 @@ async function handleInstallSkill(host: ToolExplorerHost, request: IncomingMessa
       sendJson(response, 409, { error: result.error })
       return
     }
+    invalidateSkillCache()
     sendJson(response, 200, { ok: true, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
@@ -656,6 +663,7 @@ async function handleUpdateSkillFromSource(host: ToolExplorerHost, request: Inco
       sendJson(response, 400, { error: result.error })
       return
     }
+    invalidateSkillCache()
     sendJson(response, 200, { ok: true, name: result.name, updated: result.updated, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
@@ -668,6 +676,7 @@ function handleUninstallSkill(host: ToolExplorerHost, request: IncomingMessage, 
     sendJson(response, 400, { error: result.error })
     return
   }
+  invalidateSkillCache()
   void listSkills(host).then(view => sendJson(response, 200, { ok: true, ...view }))
     .catch(error => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }))
 }

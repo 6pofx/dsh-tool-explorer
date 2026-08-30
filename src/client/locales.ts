@@ -105,6 +105,7 @@ export const zh = {
   skillUpdateBtn: '更新',
   skillUninstall: '卸载',
   skillUninstallConfirm: '卸载技能（删除目录与锁文件条目）',
+  skillHostViewOnly: '当前无活动会话，技能目录以宿主视图显示（仅含插件内置技能）；建立会话后完整目录将自动出现。',
 }
 
 export const en = {
@@ -210,4 +211,5 @@ export const en = {
   skillUpdateBtn: 'Update',
   skillUninstall: 'Uninstall',
   skillUninstallConfirm: 'Uninstall skill (delete directory + lock entry)',
+  skillHostViewOnly: 'No active session — showing the host view (plugin-provided skills only); the full catalog appears once a session is open.',
 }

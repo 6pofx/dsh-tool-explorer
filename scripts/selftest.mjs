@@ -166,10 +166,23 @@ const host = {
   loader: { entries: function* () { for (const e of composeRows(readPatch(patchPath))) yield { options: e, disabled: false, fiber: { state: 2 } } } },
   tools: { schemas: () => [ { name: 'mcp__echo__ping', description: 'ping tool', parameters: { properties: { text: {} } } } ] },
   skills: {
-    list: async () => mockSkillsList(),
+    list: async lookup => {
+      lastSkillLookup = lookup ?? {}
+      return mockSkillsList()
+    },
     get: async name => mockSkillsGet(name),
   },
+  // A live agent enables the agent-scope skill view (web presets hold the
+  // filesystem provider). Lazy lookup, exactly like the real host wiring.
+  agentsLookup: () => ({
+    list: () => [
+      { id: 'agent-demo', status: 'idle' },
+      { id: 'agent-live', status: 'running' },
+    ],
+    get: id => id === 'agent-live' ? { name: 'agent-live' } : undefined,
+  }),
 }
+let lastSkillLookup = {}
 
 function readPatch(path) {
   try { return readFileSync(path, 'utf8') } catch { return '[]\n' }
@@ -318,6 +331,8 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   console.log('routes — skills list / create / toggle / rename')
   const list = await call('/dsh-tool-explorer/api/skills')
   check('skills list includes user + runtime', list.status === 200 && list.payload.skills.length === 2, JSON.stringify(list.payload))
+  check('agent scope resolution: lookup carries the live agent scope', lastSkillLookup.scope?.name === 'agent-live')
+  check('viewScope is agent when a live agent exists', list.payload.viewScope === 'agent')
   const echo = list.payload.skills.find(item => item.name === 'echo-skill')
   check('user skill carries path + lock + editable', echo !== undefined && echo.editable && echo.managed && echo.path?.endsWith('SKILL.md'))
   check('lock info merged', echo.lock?.sourceUrl === 'https://github.com/vercel-labs/skills.git')

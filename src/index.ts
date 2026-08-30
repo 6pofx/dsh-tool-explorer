@@ -38,6 +38,17 @@ export function apply(ctx: Context, config?: Config): void {
       loader: scoped.loader,
       tools: scoped.tools,
       skills: scoped.skills,
+      // Optional agent inventory, resolved LAZILY per request (never during
+      // apply): a synchronous ctx.get('agents') at boot can wait for a
+      // service that is still mounting and hang the whole dsh startup
+      // (observed: no console output for 40+ minutes until rollback).
+      agentsLookup: () => {
+        try {
+          return ctx.get('agents') as ReturnType<NonNullable<ToolExplorerHost['agentsLookup']>> | undefined
+        } catch {
+          return undefined
+        }
+      },
       profileName: argvProfile(),
     }
     ctx.effect(() => mountRoutes(host, getSettings), 'dsh-tool-explorer: http routes')

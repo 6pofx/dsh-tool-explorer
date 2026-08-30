@@ -27,6 +27,7 @@ interface SkillListPayload {
   ok: boolean
   skills: SkillListItem[]
   complete: boolean
+  viewScope?: 'agent' | 'host'
 }
 
 interface SkillDetailPayload {
@@ -375,6 +376,9 @@ export function SkillSection({ t }: { t: Translate }) {
       h('span', { style: styles.muted }, `${filtered.length}/${list?.skills.length ?? 0} · ${t('skillCountNote')}`),
     ]),
     error === null ? null : h('div', { style: styles.error }, error),
+    list !== null && list.viewScope === 'host'
+      ? h('div', { style: styles.muted }, t('skillHostViewOnly'))
+      : null,
 
     installOpen ? h('div', { style: styles.panel }, [
       h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } }, [

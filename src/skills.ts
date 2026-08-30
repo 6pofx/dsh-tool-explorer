@@ -40,14 +40,53 @@ export interface SkillDefinitionLike extends SkillSummaryLike {
 
 /** The host skills service (structural subset of the SkillRegistry). */
 export interface SkillsService {
-  list(): Promise<SkillSummaryLike[]>
-  get(name: string): Promise<SkillDefinitionLike | undefined>
+  list(options?: { scope?: unknown; cwd?: string }): Promise<SkillSummaryLike[]>
+  get(name: string, options?: { scope?: unknown; cwd?: string }): Promise<SkillDefinitionLike | undefined>
+}
+
+/** Optional host agent inventory (dsh-agent), read ONLY at request time. */
+export interface AgentsLike {
+  list(): Array<{ id?: unknown; status?: unknown } | null>
+  get?(id: unknown): unknown
 }
 
 export interface SkillsHost {
   dshHome?: string
   agentsHome?: string
+  /**
+   * Optional lazy agent lookup. MUST be a function called at request time —
+   * a synchronous ctx.get('agents') during apply() can wait for a service
+   * that is still mounting and hang the entire dsh boot.
+   */
+  agentsLookup?: () => AgentsLike | undefined
   skills: SkillsService
+}
+
+/**
+ * The skills registry is scope-layered: Web mounts the filesystem provider
+ * inside each session's agent preset, so the user-root catalog is only
+ * visible from an agent's scope. Resolve one live agent as the viewing scope
+ * (mirrors what dsh-tool-skill passes on every read).
+ */
+export function agentScopeOf(host: SkillsHost): unknown | undefined {
+  let agents: AgentsLike | undefined
+  try {
+    agents = host.agentsLookup?.()
+  } catch {
+    return undefined
+  }
+  if (agents === undefined) return undefined
+  try {
+    for (const entry of agents.list() ?? []) {
+      if (entry === null || typeof entry !== 'object') continue
+      if (entry.status !== 'running' || typeof entry.id !== 'string' || entry.id === '') continue
+      const scope = agents.get?.(entry.id)
+      if (scope !== undefined) return scope
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
 }
 
 /** One entry of the shared `.skill-lock.json` (Skills CLI ecosystem). */
@@ -162,8 +201,27 @@ export interface SkillListView {
   hiddenInCatalog: boolean
 }
 
-/** Build the merged catalog view. */
-export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean }> {
+/** Build the merged catalog view (cached; see invalidateSkillCache). */
+export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' }> {
+  const key = `${agentsHomeOf(host)}\u0000${dshHomeOf(host)}`
+  const cached = skillListCache.get(key)
+  if (cached !== undefined && Date.now() - cached.at < SKILL_LIST_TTL_MS) {
+    return cached.value
+  }
+  const value = await collectSkills(host)
+  skillListCache.set(key, { at: Date.now(), value })
+  return value
+}
+
+/** Invalidate the cached catalog after any mutation (edit/install/toggle/...). */
+export function invalidateSkillCache(): void {
+  skillListCache.clear()
+}
+
+const SKILL_LIST_TTL_MS = 15_000
+const skillListCache = new Map<string, { at: number; value: { skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' } }>()
+
+async function collectSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' }> {
   const lock = readSkillLock(host) ?? {}
   const disk = new Map<string, { source: string; path: string }>()
   for (const root of userSkillRoots(host)) {
@@ -173,8 +231,10 @@ export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListV
   }
   let summaries: SkillSummaryLike[] = []
   let complete = true
+  const scope = agentScopeOf(host)
+  const lookup = scope === undefined ? {} : { scope }
   try {
-    summaries = await host.skills.list()
+    summaries = await host.skills.list(lookup)
   } catch {
     complete = false
   }
@@ -224,7 +284,7 @@ export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListV
     })
   }
   const skills = views.sort((a, b) => a.name.localeCompare(b.name))
-  return { skills, complete }
+  return { skills, complete, viewScope: scope === undefined ? 'host' : 'agent' }
 }
 
 /** Parsed frontmatter of a skill file. */
