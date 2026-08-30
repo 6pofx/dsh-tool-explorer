@@ -3,7 +3,7 @@
  */
 
 export const zh = {
-  nav: '工具探索',
+  nav: 'Skills 和 MCP',
   setDesc: '浏览与管理技能和 MCP 服务器。',
   skillsTab: '技能',
   mcpTab: 'MCP',
@@ -108,7 +108,7 @@ export const zh = {
 }
 
 export const en = {
-  nav: 'Tool Explorer',
+  nav: 'Skills & MCP',
   setDesc: 'Browse and manage skills and MCP servers.',
   skillsTab: 'Skills',
   mcpTab: 'MCP',
