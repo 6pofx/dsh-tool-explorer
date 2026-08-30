@@ -22,6 +22,10 @@ import {
   createSkill, isSkillName, listSkills, readSkillFile, readSkillLock, setSkillEnabled,
   updateSkill, type SkillsHost,
 } from './skills.js'
+import {
+  checkSkillUpdate, installCandidate, previewInstall, uninstallSkill,
+  updateSkillFromSource, type InstallCandidate, type InstallPreview,
+} from './skills-install.js'
 import type { ToolExplorerSettings } from './settings.js'
 
 /** Structural subset of the dsh webServer service. */
@@ -245,6 +249,26 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
   }))
 
   disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/install-preview',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleInstallPreview(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/install',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleInstallSkill(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
     kind: 'prefix',
     path: '/dsh-tool-explorer/api/skills',
     handler: async (request, response) => {
@@ -253,23 +277,41 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
         sendJson(response, 404, { error: 'not found' })
         return
       }
-      const isToggle = name.endsWith('/toggle')
-      const skillName = isToggle ? name.slice(0, -'/toggle'.length) : name
-      if (request.method === 'GET' && !isToggle) {
+      const action = name.endsWith('/toggle') ? 'toggle'
+        : name.endsWith('/check') ? 'check'
+        : name.endsWith('/update') ? 'update'
+        : null
+      const skillName = action === null ? name : name.slice(0, name.length - `/${action}`.length)
+      if (request.method === 'GET' && action === null) {
         await handleSkillDetail(host, request, response, skillName)
         return
       }
-      if (request.method === 'PUT' && !isToggle) {
+      if (request.method === 'PUT' && action === null) {
         if (!requireSameOrigin(request, response)) return
         await handleUpdateSkill(host, request, response, skillName)
         return
       }
-      if (request.method === 'POST' && isToggle) {
+      if (request.method === 'DELETE' && action === null) {
+        if (!requireSameOrigin(request, response)) return
+        handleUninstallSkill(host, request, response, skillName)
+        return
+      }
+      if (action === 'toggle' && request.method === 'POST') {
         if (!requireSameOrigin(request, response)) return
         await handleToggleSkill(host, request, response, skillName)
         return
       }
-      response.writeHead(405, { allow: 'GET, PUT, POST' })
+      if (action === 'check' && request.method === 'POST') {
+        if (!requireSameOrigin(request, response)) return
+        await handleCheckSkill(host, request, response, skillName)
+        return
+      }
+      if (action === 'update' && request.method === 'POST') {
+        if (!requireSameOrigin(request, response)) return
+        await handleUpdateSkillFromSource(host, request, response, skillName)
+        return
+      }
+      response.writeHead(405, { allow: 'GET, PUT, POST, DELETE' })
       response.end()
     },
   }))
@@ -549,4 +591,83 @@ async function handleToggleSkill(host: ToolExplorerHost, request: IncomingMessag
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
   }
+}
+
+// --- skills install ecosystem ---
+
+async function handleInstallPreview(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    if (typeof body.url !== 'string' || body.url.trim() === '') {
+      sendJson(response, 400, { error: 'a GitHub url or owner/repo spec is required' })
+      return
+    }
+    const preview = await previewInstall(host, body.url)
+    sendJson(response, 200, { ok: true, preview })
+  } catch (error) {
+    sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleInstallSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const target = body.target as { owner?: unknown; repo?: unknown; branch?: unknown; path?: unknown } | undefined
+    const candidate = body.candidate as InstallCandidate | undefined
+    if (target === undefined || typeof target.owner !== 'string' || typeof target.repo !== 'string') {
+      sendJson(response, 400, { error: 'target is required (owner/repo from the preview)' })
+      return
+    }
+    if (candidate === undefined || typeof candidate.name !== 'string' || typeof candidate.skillPath !== 'string') {
+      sendJson(response, 400, { error: 'candidate is required (from the preview)' })
+      return
+    }
+    const sourceUrl = typeof body.sourceUrl === 'string' ? body.sourceUrl : `https://github.com/${target.owner}/${target.repo}.git`
+    const preview: InstallPreview = { target: { owner: target.owner, repo: target.repo, ...(typeof target.branch === 'string' && target.branch !== '' ? { branch: target.branch } : {}), ...(typeof target.path === 'string' && target.path !== '' ? { path: target.path } : {}) }, sourceUrl, candidates: [candidate] }
+    const root = body.root === '~/.dsh/skills' ? '~/.dsh/skills' : '~/.agents/skills'
+    const result = await installCandidate(host, preview, candidate, root)
+    if (!result.ok) {
+      sendJson(response, 409, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, ...await listSkills(host) })
+  } catch (error) {
+    sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleCheckSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  try {
+    const result = await checkSkillUpdate(host, name)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, updateAvailable: result.updateAvailable, currentHash: result.currentHash, targetHash: result.targetHash })
+  } catch (error) {
+    sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleUpdateSkillFromSource(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  try {
+    const result = await updateSkillFromSource(host, name)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, name: result.name, updated: result.updated, ...await listSkills(host) })
+  } catch (error) {
+    sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+function handleUninstallSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): void {
+  const result = uninstallSkill(host, name)
+  if (!result.ok) {
+    sendJson(response, 400, { error: result.error })
+    return
+  }
+  void listSkills(host).then(view => sendJson(response, 200, { ok: true, ...view }))
+    .catch(error => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }))
 }

@@ -368,6 +368,125 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   check('runtime detail read-only ok', runtimeDetail.status === 200 && runtimeDetail.payload.definition?.content.length > 0)
 }
 
+// ---------- 4.5 git install ecosystem ----------
+{
+  console.log('routes — git install ecosystem')
+  const { createHash } = await import('node:crypto')
+  const installModule = await import(pathToFileURL(`${lib}/skills-install.js`).href)
+  const { parseGitHubInput, DEFAULT_GITHUB_PROXY } = installModule
+
+  check('parse owner/repo', parseGitHubInput('vercel-labs/skills')?.owner === 'vercel-labs')
+  check('parse github url with tree path', parseGitHubInput('https://github.com/a/b/tree/main/skills/x')?.path === 'skills/x')
+  check('parse branch fragment', parseGitHubInput('a/b#dev')?.branch === 'dev')
+  check('reject non-github', parseGitHubInput('https://evil.com/a/b') === null)
+  check('proxy prefix format', installModule.throughProxy(DEFAULT_GITHUB_PROXY, 'https://codeload.github.com/a/b/tar.gz/HEAD').startsWith('https://gh-proxy.com/https://codeload.github.com'))
+
+  const repoBase = join(tmp, 'repo-fixture')
+  const fixtureV1 = join(repoBase, 'v1', 'repo-fix')
+  const fixtureV2 = join(repoBase, 'v2', 'repo-fix')
+  for (const [dir, version] of [[fixtureV1, 'one'], [fixtureV2, 'two']]) {
+    mkdirSync(join(dir, 'skills', 'alpha'), { recursive: true })
+    mkdirSync(join(dir, 'skills', 'beta'), { recursive: true })
+    mkdirSync(join(dir, '.git'), { recursive: true })
+    writeFileSync(join(dir, 'README.md'), `# fix ${version}\n`)
+    writeFileSync(join(dir, 'skills', 'alpha', 'SKILL.md'), `---\nname: alpha-skill\ndescription: Alpha skill v${version}\n---\n\n# Alpha\nVersion ${version}\n`)
+    writeFileSync(join(dir, 'skills', 'alpha', 'hint.txt'), `hint-${version}\n`)
+    writeFileSync(join(dir, 'skills', 'beta', 'SKILL.md'), '---\nname: beta-skill\ndescription: Beta skill\n---\n\n# Beta\n')
+    writeFileSync(join(dir, '.git', 'junk'), 'ignored') // must be skipped by the hash
+  }
+  const tarModule = await import('tar')
+  const tarballV1 = join(tmp, 'fix-v1.tar.gz')
+  const tarballV2 = join(tmp, 'fix-v2.tar.gz')
+  // codeload layout: single top-level `<repo>-<sha>/` directory.
+  await tarModule.c({ gzip: true, file: tarballV1, cwd: join(repoBase, 'v1') }, ['repo-fix'])
+  await tarModule.c({ gzip: true, file: tarballV2, cwd: join(repoBase, 'v2') }, ['repo-fix'])
+
+  let currentTarball = tarballV1
+  host.fetchImpl = async () => {
+    const body = readFileSync(currentTarball)
+    return {
+      ok: true,
+      status: 200,
+      arrayBuffer: async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength),
+    }
+  }
+
+  const preview = await call('/dsh-tool-explorer/api/skills/install-preview', {
+    method: 'POST', body: { url: 'demo/fix' },
+  })
+  check('preview discovers two candidates', preview.status === 200 && preview.payload.preview.candidates.length === 2, JSON.stringify(preview.payload))
+  const alpha = preview.payload.preview.candidates.find((c) => c.name === 'alpha-skill')
+  check('preview candidate meta', alpha !== undefined && alpha.description === 'Alpha skill vone')
+
+  const installed = await call('/dsh-tool-explorer/api/skills/install', {
+    method: 'POST',
+    body: {
+      target: preview.payload.preview.target,
+      sourceUrl: preview.payload.preview.sourceUrl,
+      candidate: alpha,
+      root: '~/.agents/skills',
+    },
+  })
+  check('install succeeds', installed.status === 200, JSON.stringify(installed.payload))
+  const installedDir = join(userSkillsRoot, 'alpha-skill')
+  check('skill dir created', existsSync(join(installedDir, 'SKILL.md')))
+  const lockAfter = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('lock entry written (v3 shape)', lockAfter.version === 3 && lockAfter.skills['alpha-skill']?.source === 'demo/fix'
+    && lockAfter.skills['alpha-skill']?.sourceUrl === 'https://github.com/demo/fix.git'
+    && lockAfter.skills['alpha-skill']?.skillPath === 'skills/alpha/SKILL.md')
+  // Independent reimplementation of the CLI hash (regression guard).
+  const independentHash = await (async () => {
+    const { relative } = await import('node:path')
+    const files = []
+    const collect = (base, cur) => {
+      for (const e of readdirSync(cur, { withFileTypes: true })) {
+        const full = join(cur, e.name)
+        if (e.isDirectory()) { if (e.name === '.git' || e.name === 'node_modules') continue; collect(base, full) }
+        else if (e.isFile()) files.push({ r: relative(base, full).split('\\').join('/'), c: readFileSync(full) })
+      }
+    }
+    collect(installedDir, installedDir)
+    files.sort((a, b) => a.r.localeCompare(b.r))
+    const h = createHash('sha256')
+    for (const f of files) { h.update(f.r); h.update(f.c) }
+    return h.digest('hex')
+  })()
+  check('lock hash matches independent CLI implementation', lockAfter.skills['alpha-skill']?.skillFolderHash === independentHash)
+
+  let checkRes = await call(`/dsh-tool-explorer/api/skills/alpha-skill/check`, { method: 'POST', body: {} })
+  check('check sees no update (v1)', checkRes.status === 200 && checkRes.payload.updateAvailable === false)
+  currentTarball = tarballV2
+  checkRes = await call(`/dsh-tool-explorer/api/skills/alpha-skill/check`, { method: 'POST', body: {} })
+  check('check sees update (v2)', checkRes.status === 200 && checkRes.payload.updateAvailable === true)
+
+  const updated = await call(`/dsh-tool-explorer/api/skills/alpha-skill/update`, { method: 'POST', body: {} })
+  check('update applies v2', updated.status === 200 && updated.payload.updated === true, JSON.stringify(updated.payload))
+  const updatedText = readFileSync(join(installedDir, 'SKILL.md'), 'utf8')
+  check('content replaced', updatedText.includes('Version two'))
+  check('backup cleaned', !existsSync(join(userSkillsRoot, '.alpha-skill.bak')))
+  const lockUpdated = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('updatedAt refreshed on update', lockUpdated.skills['alpha-skill']?.updatedAt !== lockUpdated.skills['alpha-skill']?.installedAt)
+
+  const conflict = await call('/dsh-tool-explorer/api/skills/install', {
+    method: 'POST',
+    body: {
+      target: preview.payload.preview.target,
+      sourceUrl: preview.payload.preview.sourceUrl,
+      candidate: preview.payload.preview.candidates.find((c) => c.name === 'alpha-skill'),
+      root: '~/.agents/skills',
+    },
+  })
+  check('reinstall conflicts (409)', conflict.status === 409)
+
+  const removed = await call('/dsh-tool-explorer/api/skills/alpha-skill', { method: 'DELETE' })
+  check('uninstall succeeds', removed.status === 200, JSON.stringify(removed.payload))
+  check('skill dir removed', !existsSync(installedDir))
+  const lockFinal = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('lock entry removed, others kept', lockFinal.skills['alpha-skill'] === undefined && lockFinal.skills['echo-skill'] !== undefined)
+
+  delete host.fetchImpl
+}
+
 // ---------- 5. real stdio probe ----------
 {
   console.log('routes — real stdio probe')

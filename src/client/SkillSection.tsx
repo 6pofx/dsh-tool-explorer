@@ -55,7 +55,9 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: 4, background: 'transparent', color: 'inherit', cursor: 'pointer',
   },
   buttonPrimary: { background: 'rgba(100,140,255,0.18)', borderColor: 'rgba(100,140,255,0.6)' },
+  buttonDanger: { color: '#e06666', borderColor: 'rgba(224,102,102,0.5)' },
   buttonSmall: { padding: '2px 8px', fontSize: 11 },
+  checkRow: { display: 'flex', gap: 6, alignItems: 'center', fontSize: 12 },
   panel: {
     border: '1px solid rgba(128,128,128,0.35)', borderRadius: 6, padding: '10px 12px',
     display: 'flex', flexDirection: 'column', gap: 8,
@@ -133,6 +135,15 @@ export function SkillSection({ t }: { t: Translate }) {
   const [draft, setDraft] = useState<FormDraft | null>(null)
   const [editingName, setEditingName] = useState<string | null>(null)
   const [formError, setFormError] = useState<string | null>(null)
+  const [installOpen, setInstallOpen] = useState(false)
+  const [installUrl, setInstallUrl] = useState('')
+  const [installPreview, setInstallPreview] = useState<{ preview: { target: Record<string, string>; sourceUrl: string; candidates: Array<{ skillPath: string; name: string; description: string; bodyPreview: string }> } } | null>(null)
+  const [installSelected, setInstallSelected] = useState<string | null>(null)
+  const [installRoot, setInstallRoot] = useState<'~/.agents/skills' | '~/.dsh/skills'>('~/.agents/skills')
+  const [installBusy, setInstallBusy] = useState(false)
+  const [installError, setInstallError] = useState<string | null>(null)
+  const [installResult, setInstallResult] = useState<string | null>(null)
+  const [updateStates, setUpdateStates] = useState<Record<string, { checking?: boolean; available?: boolean; busy?: boolean; error?: string }>>({})
 
   const load = useCallback(async () => {
     setError(null)
@@ -247,6 +258,91 @@ export function SkillSection({ t }: { t: Translate }) {
     return item.name.toLowerCase().includes(needle) || item.description.toLowerCase().includes(needle)
   })
 
+  // --- install / update / uninstall ---
+
+  const doPreview = async () => {
+    setInstallBusy(true)
+    setInstallError(null)
+    setInstallResult(null)
+    setInstallPreview(null)
+    setInstallSelected(null)
+    try {
+      const result = await fetchJson('/dsh-tool-explorer/api/skills/install-preview', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ url: installUrl.trim() }),
+      })
+      setInstallPreview(result as typeof installPreview)
+      const candidates = (result as typeof installPreview)?.preview.candidates ?? []
+      if (candidates.length === 1) setInstallSelected(candidates[0]!.name)
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setInstallBusy(false)
+    }
+  }
+
+  const doInstall = async () => {
+    if (installPreview === null || installSelected === null) return
+    setInstallBusy(true)
+    setInstallError(null)
+    setInstallResult(null)
+    try {
+      const candidate = installPreview.preview.candidates.find(item => item.name === installSelected)
+      const result = await fetchJson('/dsh-tool-explorer/api/skills/install', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          target: installPreview.preview.target,
+          sourceUrl: installPreview.preview.sourceUrl,
+          candidate,
+          root: installRoot,
+        }),
+      })
+      applyList(result)
+      setInstallResult(t('installDone').replace('{name}', installSelected))
+      setInstallPreview(null)
+      setInstallSelected(null)
+    } catch (err) {
+      setInstallError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setInstallBusy(false)
+    }
+  }
+
+  const checkUpdate = async (item: SkillListItem) => {
+    setUpdateStates(prev => ({ ...prev, [item.name]: { checking: true } }))
+    try {
+      const result = await fetchJson(`/dsh-tool-explorer/api/skills/${encodeURIComponent(item.name)}/check`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      }) as { updateAvailable: boolean }
+      setUpdateStates(prev => ({ ...prev, [item.name]: { available: result.updateAvailable } }))
+    } catch (err) {
+      setUpdateStates(prev => ({ ...prev, [item.name]: { error: err instanceof Error ? err.message : String(err) } }))
+    }
+  }
+
+  const doUpdate = async (item: SkillListItem) => {
+    setUpdateStates(prev => ({ ...prev, [item.name]: { busy: true } }))
+    try {
+      const result = await fetchJson(`/dsh-tool-explorer/api/skills/${encodeURIComponent(item.name)}/update`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}',
+      })
+      applyList(result)
+      setUpdateStates(prev => ({ ...prev, [item.name]: { available: false } }))
+    } catch (err) {
+      setUpdateStates(prev => ({ ...prev, [item.name]: { error: err instanceof Error ? err.message : String(err) } }))
+    }
+  }
+
+  const doUninstall = async (item: SkillListItem) => {
+    if (!window.confirm(`${t('skillUninstallConfirm')} ${item.name}?`)) return
+    try {
+      const result = await fetchJson(`/dsh-tool-explorer/api/skills/${encodeURIComponent(item.name)}`, { method: 'DELETE' })
+      applyList(result)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   const renderDetail = (name: string, item: SkillListItem) => {
     const entry = expanded[name]
     if (entry === undefined) return null
@@ -273,11 +369,44 @@ export function SkillSection({ t }: { t: Translate }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } }, [
     h('div', { style: styles.toolbar }, [
       h('button', { style: { ...styles.button, ...styles.buttonPrimary }, onClick: () => { setEditingName(null); setDraft(emptyDraft()); setFormError(null) } }, t('skillNew')),
+      h('button', { style: styles.button, onClick: () => { setInstallOpen(true); setInstallError(null); setInstallResult(null); setInstallPreview(null); setInstallSelected(null) } }, t('skillInstallGit')),
       h('input', { style: styles.search, value: query, placeholder: t('skillSearch'), onChange: (event: React.ChangeEvent<HTMLInputElement>) => setQuery(event.target.value) }),
       h('button', { style: styles.button, onClick: () => void load() }, t('refresh')),
       h('span', { style: styles.muted }, `${filtered.length}/${list?.skills.length ?? 0} · ${t('skillCountNote')}`),
     ]),
     error === null ? null : h('div', { style: styles.error }, error),
+
+    installOpen ? h('div', { style: styles.panel }, [
+      h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 8 } }, [
+        h('span', { style: styles.panelTitle }, t('skillInstallGit')),
+        h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => setInstallOpen(false) }, t('cancel')),
+      ]),
+      h('div', { style: { display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' } }, [
+        h('input', { style: { ...styles.search, flex: '1 1 280px' }, value: installUrl, placeholder: 'owner/repo 或 https://github.com/owner/repo[/tree/branch/path]', onChange: (event: React.ChangeEvent<HTMLInputElement>) => setInstallUrl(event.target.value) }),
+        h('button', { style: styles.button, onClick: () => void doPreview(), disabled: installBusy || installUrl.trim() === '' }, t('skillInstallPreview')),
+        h('select', { style: styles.input, value: installRoot, onChange: (event: React.ChangeEvent<HTMLSelectElement>) => setInstallRoot(event.target.value as '~/.agents/skills' | '~/.dsh/skills') }, [
+          h('option', { value: '~/.agents/skills' }, '~/.agents/skills'),
+          h('option', { value: '~/.dsh/skills' }, '~/.dsh/skills'),
+        ]),
+      ]),
+      installError === null ? null : h('div', { style: styles.error }, installError),
+      installResult === null ? null : h('div', { style: styles.ok }, installResult),
+      installPreview !== null
+        ? (installPreview.preview.candidates.length === 0
+          ? h('div', { style: styles.muted }, t('installNoCandidate'))
+          : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, [
+              installPreview.preview.candidates.map(candidate => h('label', { key: candidate.name, style: { ...styles.checkRow } }, [
+                h('input', { type: 'radio', name: 'install-candidate', checked: installSelected === candidate.name, onChange: () => setInstallSelected(candidate.name) }),
+                h('span', { style: { fontWeight: 600 } }, candidate.name),
+                h('span', { style: styles.muted }, `[${candidate.skillPath || 'repo root'}]`),
+                h('span', { style: styles.muted }, candidate.description),
+              ])),
+              h('div', { style: styles.actions }, [
+                h('button', { style: { ...styles.button, ...styles.buttonPrimary }, onClick: () => void doInstall(), disabled: installBusy || installSelected === null }, t('skillInstallRun')),
+              ]),
+            ]))
+        : null,
+    ]) : null,
 
     draft === null ? null : h('div', { style: styles.panel }, [
       h('div', { style: styles.panelTitle }, t(editingName === null ? 'skillNew' : 'skillEdit')),
@@ -345,6 +474,14 @@ export function SkillSection({ t }: { t: Translate }) {
               onClick: () => void toggleEnabled(item),
               disabled: busy === item.name,
             }, item.disabled ? t('skillEnable') : t('skillDisable')) : null,
+            item.managed ? h('button', {
+              style: { ...styles.button, ...styles.buttonSmall },
+              onClick: () => void checkUpdate(item),
+              disabled: updateStates[item.name]?.checking === true || updateStates[item.name]?.busy === true,
+            }, updateStates[item.name]?.checking ? t('skillChecking') : t('skillCheck')) : null,
+            updateStates[item.name]?.available === true ? h('button', { style: { ...styles.button, ...styles.buttonPrimary, ...styles.buttonSmall }, onClick: () => void doUpdate(item), disabled: updateStates[item.name]?.busy === true }, t('skillUpdateBtn')) : null,
+            updateStates[item.name]?.error !== undefined ? h('span', { style: { ...styles.muted, color: '#e06666' } }, updateStates[item.name].error) : null,
+            item.managed ? h('button', { style: { ...styles.button, ...styles.buttonSmall, ...styles.buttonDanger }, onClick: () => void doUninstall(item) }, t('skillUninstall')) : null,
             h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => void toggleDetail(item.name) }, t('skillDetail')),
           ]),
           renderDetail(item.name, item),

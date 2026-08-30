@@ -95,6 +95,16 @@ export const zh = {
   skillFieldModel: '模型可调用',
   skillFieldUser: '用户可调用',
   skillFieldBody: '正文（Markdown）',
+  skillInstallGit: '从 GitHub 安装',
+  skillInstallPreview: '预览',
+  skillInstallRun: '安装',
+  installNoCandidate: '未在该仓库发现 SKILL.md（请确认路径）。',
+  installDone: '已安装 {name}（写入锁文件，可更新/卸载）',
+  skillCheck: '检查更新',
+  skillChecking: '检查中…',
+  skillUpdateBtn: '更新',
+  skillUninstall: '卸载',
+  skillUninstallConfirm: '卸载技能（删除目录与锁文件条目）',
 }
 
 export const en = {
@@ -190,4 +200,14 @@ export const en = {
   skillFieldModel: 'Model invocable',
   skillFieldUser: 'User invocable',
   skillFieldBody: 'Body (Markdown)',
+  skillInstallGit: 'Install from GitHub',
+  skillInstallPreview: 'Preview',
+  skillInstallRun: 'Install',
+  installNoCandidate: 'No SKILL.md found in this repo (check the path).',
+  installDone: 'Installed {name} (lockfile-managed; update/uninstall available)',
+  skillCheck: 'Check updates',
+  skillChecking: 'Checking…',
+  skillUpdateBtn: 'Update',
+  skillUninstall: 'Uninstall',
+  skillUninstallConfirm: 'Uninstall skill (delete directory + lock entry)',
 }
