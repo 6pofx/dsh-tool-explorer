@@ -266,11 +266,13 @@ async function collectSkills(host: SkillsHost): Promise<{ skills: SkillListView[
   }
   // User-root skills the registry did not surface (shadowed by a nearer
   // provider, or invalid frontmatter) — still worth showing as managed state.
+  // Read the real description off disk so a hidden row is never a mystery.
   for (const [name, entry] of disk) {
     if (seen.has(name)) continue
+    const parsed = readSkillFile(entry.path)
     views.push({
       name,
-      description: '(catalog hidden)',
+      description: parsed?.frontmatter?.description ?? '(无简介 / no description)',
       source: entry.source,
       provider: 'filesystem',
       modelInvocable: true,
