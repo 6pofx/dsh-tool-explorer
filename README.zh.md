@@ -62,7 +62,7 @@ dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.3.0.t
 
 ## dsh-mcp-client 本地补丁
 
-两个幂等补丁修复上游 dsh-mcp-client 的缺口（已通过 GitHub Discussion 上报；每次 mcp-client 更新后需重跑——dshmarket 升级会还原官方文件）：
+两个幂等补丁修复上游 dsh-mcp-client 的缺口（[已上报官方讨论](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)；每次 mcp-client 更新后需重跑——dshmarket 升级会还原官方文件）：
 
 ```bash
 # 1) 静音 stdio 服务器 stderr（banner/JSON 日志曾刷爆 dsh web 输出）

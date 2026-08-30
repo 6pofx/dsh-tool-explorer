@@ -12,6 +12,9 @@
  * the official file). Backs up the original as index.js.bak on first patch.
  * Remove the patch when the official package gains a stderr option.
  *
+ * Reported upstream:
+ * https://github.com/deepseek-ai/deepseek-harness/discussions/5129
+ *
  * Usage:  node scripts/patch-mcp-client-stderr.mjs [--target <path>]
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'

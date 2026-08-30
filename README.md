@@ -62,7 +62,7 @@ dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.3.0.t
 
 ## Local dsh-mcp-client patches
 
-Two idempotent patches fix upstream dsh-mcp-client gaps until the official package gains config support (reported upstream via GitHub Discussion; re-run after any mcp-client update — dshmarket upgrades restore the official files):
+Two idempotent patches fix upstream dsh-mcp-client gaps until the official package gains config support ([reported upstream](https://github.com/deepseek-ai/deepseek-harness/discussions/5129); re-run after any mcp-client update — dshmarket upgrades restore the official files):
 
 ```bash
 # 1) silence stdio server stderr (banners/JSON logs were flooding `dsh web` output)

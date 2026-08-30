@@ -20,6 +20,9 @@
  * restore the official file). Backs up as index.js.async.bak on first
  * patch. Remove when the official package gains a startup timeout.
  *
+ * Reported upstream:
+ * https://github.com/deepseek-ai/deepseek-harness/discussions/5129
+ *
  * Usage:  node scripts/patch-mcp-client-async.mjs [--target <path>]
  */
 import { readFileSync, writeFileSync, existsSync, copyFileSync } from 'node:fs'
