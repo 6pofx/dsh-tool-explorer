@@ -5,7 +5,7 @@
  *
  * Runs after `pnpm build`; everything is local (no profile touched).
  */
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, mkdirSync, writeFileSync, rmSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath, pathToFileURL } from 'node:url'
@@ -71,9 +71,90 @@ function composeRows(text) {
 
 const exactRoutes = new Map()
 const prefixRoutes = new Map()
+
+// --- mock skills registry: scans a tmp agents home, mirrors the provider ---
+const agentsHome = join(tmp, 'agentsHome')
+const userSkillsRoot = join(agentsHome, 'skills')
+mkdirSync(join(userSkillsRoot, 'echo-skill'), { recursive: true })
+writeFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), '---\nname: echo-skill\ndescription: Echo test skill\n---\n\n# Echo\nHello\n')
+writeFileSync(join(agentsHome, '.skill-lock.json'), JSON.stringify({
+  version: 3,
+  skills: { 'echo-skill': { source: 'vercel-labs/skills', sourceType: 'github', sourceUrl: 'https://github.com/vercel-labs/skills.git', skillPath: 'skills/echo-skill/SKILL.md', skillFolderHash: 'abc', installedAt: '2026-08-30T00:00:00.000Z', updatedAt: '2026-08-30T00:00:00.000Z' } },
+}))
+
+const { load: yamlLoad } = await import('js-yaml')
+
+function parseFrontmatter(text) {
+  const match = /^---\n([\s\S]*?)\n---\n?/.exec(text)
+  const raw = match === null ? '' : match[1]
+  let frontmatter = parsePatchText(raw) ?? yamlLoad(raw) ?? {}
+  if (typeof frontmatter !== 'object' || Array.isArray(frontmatter)) frontmatter = {}
+  return { frontmatter, body: match === null ? text : text.slice(match[0].length).trim() }
+}
+
+function mockSkillsList() {
+  const out = []
+  for (const dir of readdirSyncSafe(userSkillsRoot)) {
+    const file = join(userSkillsRoot, dir, 'SKILL.md')
+    if (!existsSyncSafe(file)) continue
+    const parsed = parseFrontmatter(readFileSync(file, 'utf8'))
+    const fm = parsed.frontmatter ?? {}
+    out.push({
+      name: fm.name ?? dir,
+      description: typeof fm.description === 'string' ? fm.description : '',
+      whenToUse: typeof fm['whenToUse'] === 'string' ? fm['whenToUse'] : undefined,
+      invocation: {
+        modelInvocable: fm['disable-model-invocation'] !== true,
+        userInvocable: fm['user-invocable'] !== false,
+      },
+      source: 'user-agents',
+      provider: 'filesystem',
+    })
+  }
+  out.push({
+    name: 'runtime-sample',
+    description: 'A plugin-provided skill',
+    invocation: { modelInvocable: true, userInvocable: true },
+    source: 'runtime',
+    provider: 'some-plugin',
+  })
+  return out
+}
+
+function mockSkillsGet(name) {
+  if (name === 'runtime-sample') {
+    return { name, description: 'A plugin-provided skill', content: '# Runtime\nbody', invocation: { modelInvocable: true, userInvocable: true }, source: 'runtime', provider: 'some-plugin' }
+  }
+  const file = join(userSkillsRoot, name, 'SKILL.md')
+  if (!existsSyncSafe(file)) return undefined
+  const parsed = parseFrontmatter(readFileSync(file, 'utf8'))
+  const fm = parsed.frontmatter ?? {}
+  return {
+    name: fm.name ?? name,
+    description: typeof fm.description === 'string' ? fm.description : '',
+    whenToUse: typeof fm['whenToUse'] === 'string' ? fm['whenToUse'] : undefined,
+    content: parsed.body,
+    path: file,
+    invocation: {
+      modelInvocable: fm['disable-model-invocation'] !== true,
+      userInvocable: fm['user-invocable'] !== false,
+    },
+    source: 'user-agents',
+    provider: 'filesystem',
+  }
+}
+
+function readdirSyncSafe(path) {
+  try { return readdirSync(path, { withFileTypes: true }).filter(e => e.isDirectory()).map(e => e.name) } catch { return [] }
+}
+function existsSyncSafe(path) {
+  try { return existsSync(path) } catch { return false }
+}
+
 const host = {
   profileName: 'web',
   dshHome,
+  agentsHome,
   webServer: {
     register: r => {
       const table = r.kind === 'exact' ? exactRoutes : prefixRoutes
@@ -84,6 +165,10 @@ const host = {
   },
   loader: { entries: function* () { for (const e of composeRows(readPatch(patchPath))) yield { options: e, disabled: false, fiber: { state: 2 } } } },
   tools: { schemas: () => [ { name: 'mcp__echo__ping', description: 'ping tool', parameters: { properties: { text: {} } } } ] },
+  skills: {
+    list: async () => mockSkillsList(),
+    get: async name => mockSkillsGet(name),
+  },
 }
 
 function readPatch(path) {
@@ -228,7 +313,62 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   process.env.DSH_TE_AGENT_HOME = previousHome ?? ''
 }
 
-// ---------- 4. real stdio probe ----------
+// ---------- 4. skills ----------
+{
+  console.log('routes — skills list / create / toggle / rename')
+  const list = await call('/dsh-tool-explorer/api/skills')
+  check('skills list includes user + runtime', list.status === 200 && list.payload.skills.length === 2, JSON.stringify(list.payload))
+  const echo = list.payload.skills.find(item => item.name === 'echo-skill')
+  check('user skill carries path + lock + editable', echo !== undefined && echo.editable && echo.managed && echo.path?.endsWith('SKILL.md'))
+  check('lock info merged', echo.lock?.sourceUrl === 'https://github.com/vercel-labs/skills.git')
+  const runtime = list.payload.skills.find(item => item.name === 'runtime-sample')
+  check('runtime skill read-only', runtime !== undefined && runtime.editable === false)
+
+  const bad = await call('/dsh-tool-explorer/api/skills', { method: 'POST', body: { name: 'Bad Name!', description: 'x' } })
+  check('invalid name rejected (400)', bad.status === 400)
+  const noDesc = await call('/dsh-tool-explorer/api/skills', { method: 'POST', body: { name: 'ok-name' } })
+  check('missing description rejected (400)', noDesc.status === 400)
+
+  const created = await call('/dsh-tool-explorer/api/skills', {
+    method: 'POST',
+    body: { root: '~/.agents/skills', name: 'my-new', description: 'A brand new skill', whenToUse: 'always', modelInvocable: true, userInvocable: true, body: '# Hello\nWorld' },
+  })
+  check('create succeeds', created.status === 200, JSON.stringify(created.payload))
+  const newFile = join(userSkillsRoot, 'my-new', 'SKILL.md')
+  check('skill file written', existsSync(newFile))
+  const newText = readFileSync(newFile, 'utf8')
+  check('frontmatter serialized', /^---\nname: my-new\n/mu.test(newText) && newText.includes('# Hello'))
+  check('created skill appears in list', created.payload.skills.some(item => item.name === 'my-new'))
+
+  const toggled = await call('/dsh-tool-explorer/api/skills/my-new/toggle', { method: 'POST', body: { enabled: false } })
+  check('toggle disable succeeds', toggled.status === 200)
+  const toggledText = readFileSync(newFile, 'utf8')
+  check('dual flags written', toggledText.includes('disable-model-invocation: true') && toggledText.includes('user-invocable: false'))
+  const afterToggleList = await call('/dsh-tool-explorer/api/skills')
+  check('list reflects disabled', afterToggleList.payload.skills.find(item => item.name === 'my-new')?.disabled === true)
+
+  const renamed = await call('/dsh-tool-explorer/api/skills/my-new', {
+    method: 'PUT',
+    body: { name: 'my-renamed', description: 'Renamed skill', whenToUse: undefined, modelInvocable: true, userInvocable: true, body: '# Renamed\ncontent' },
+  })
+  check('rename succeeds', renamed.status === 200, JSON.stringify(renamed.payload))
+  check('old dir gone, new dir present', !existsSync(join(userSkillsRoot, 'my-new')) && existsSync(join(userSkillsRoot, 'my-renamed', 'SKILL.md')))
+
+  const toggleBack = await call('/dsh-tool-explorer/api/skills/echo-skill/toggle', { method: 'POST', body: { enabled: false } })
+  check('toggle existing skill', toggleBack.status === 200)
+  const echoText = readFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), 'utf8')
+  check('existing skill flags written', echoText.includes('disable-model-invocation: true'))
+  await call('/dsh-tool-explorer/api/skills/echo-skill/toggle', { method: 'POST', body: { enabled: true } })
+  const echoText2 = readFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), 'utf8')
+  check('re-enable removes flags', !echoText2.includes('disable-model-invocation'))
+
+  const detail = await call('/dsh-tool-explorer/api/skills/echo-skill')
+  check('detail returns body + lock', detail.status === 200 && detail.payload.raw?.body.includes('Hello') && detail.payload.lock?.skillPath !== undefined)
+  const runtimeDetail = await call('/dsh-tool-explorer/api/skills/runtime-sample')
+  check('runtime detail read-only ok', runtimeDetail.status === 200 && runtimeDetail.payload.definition?.content.length > 0)
+}
+
+// ---------- 5. real stdio probe ----------
 {
   console.log('routes — real stdio probe')
   // Write the server script into the workspace (.ref is gitignored) so the

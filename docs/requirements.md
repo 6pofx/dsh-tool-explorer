@@ -268,7 +268,8 @@ DSH 是一个 Cordis 插件架构的 Agent Harness。当前生态中：
 |---|---|
 | M0 骨架 | ✅ 完成（设置页可见、构建管线、bundle 加载） |
 | M1 MCP 管理 | ✅ 完成 + 1.1 增强：**修复 host 挂在 Cordis Proxy 上的赋值 bug**（表现为全路由静默 404）、**prefix 路由不带尾斜杠**（webserver 匹配语义为 `prefix + '/'`）；表单改内联面板；**跨 agent MCP 导入（D10）已实现**（JSON + Codex TOML 子集解析、名称规范化、冲突跳过）；真实 boot 端到端验证：添加→HMR 热生效（active / 1 tool）→删除→patch 恢复 `[]` |
-| M2/M3 Skills | 未开始 |
+| M2 技能浏览/编辑/启停 | ✅ 完成：目录视图（registry × 锁文件 × 磁盘扫描合并、来源/可编辑/managed/隐藏标记）、搜索、详情与正文预览、**新建/编辑（内联表单，kebab 校验、frontmatter 序列化、改名=目录改名+锁文件 key 迁移）**、**启停（frontmatter 双开关 D6）**；自测 54 项全绿；真实环境验证：12 技能正确合并（含 bundled 只读、非锁文件安装区分）、7 个 MCP 服务器状态/工具数全部正确 |
+| M3 技能安装生态 | 未开始 |
 
 > 待定：包名是否可用（`dsh-tool-explorer` 或 scoped `@<user>/dsh-tool-explorer`，M0 落定时用 npm 查重）。
 

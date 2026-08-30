@@ -18,6 +18,10 @@ import {
   type McpHost, type McpServerSpec, type PatchLayer, type WriteOptions,
 } from './mcp.js'
 import { normalizeServerName, scanAgentMcpSources } from './agents-mcp.js'
+import {
+  createSkill, isSkillName, listSkills, readSkillFile, readSkillLock, setSkillEnabled,
+  updateSkill, type SkillsHost,
+} from './skills.js'
 import type { ToolExplorerSettings } from './settings.js'
 
 /** Structural subset of the dsh webServer service. */
@@ -47,7 +51,7 @@ export interface ToolsService {
 }
 
 /** The host services this plugin's routes consume. */
-export interface ToolExplorerHost extends McpHost {
+export interface ToolExplorerHost extends McpHost, SkillsHost {
   webServer: WebServerService
   loader: { entries(): Iterable<LoaderEntry> }
   tools: ToolsService
@@ -220,6 +224,52 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
         return
       }
       response.writeHead(405, { allow: 'GET, PUT, DELETE' })
+      response.end()
+    },
+  }))
+
+  // --- Skills ---
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['GET', 'POST'])) return
+      if (request.method === 'POST') {
+        if (!requireSameOrigin(request, response)) return
+        await handleCreateSkill(host, request, response)
+        return
+      }
+      await handleListSkills(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'prefix',
+    path: '/dsh-tool-explorer/api/skills',
+    handler: async (request, response) => {
+      const name = param(request, '/dsh-tool-explorer/api/skills')
+      if (name === '') {
+        sendJson(response, 404, { error: 'not found' })
+        return
+      }
+      const isToggle = name.endsWith('/toggle')
+      const skillName = isToggle ? name.slice(0, -'/toggle'.length) : name
+      if (request.method === 'GET' && !isToggle) {
+        await handleSkillDetail(host, request, response, skillName)
+        return
+      }
+      if (request.method === 'PUT' && !isToggle) {
+        if (!requireSameOrigin(request, response)) return
+        await handleUpdateSkill(host, request, response, skillName)
+        return
+      }
+      if (request.method === 'POST' && isToggle) {
+        if (!requireSameOrigin(request, response)) return
+        await handleToggleSkill(host, request, response, skillName)
+        return
+      }
+      response.writeHead(405, { allow: 'GET, PUT, POST' })
       response.end()
     },
   }))
@@ -401,6 +451,101 @@ async function handleImport(host: ToolExplorerHost, request: IncomingMessage, re
       else skipped.push({ name: serverName, reason: result.error })
     }
     sendJson(response, 200, { ok: true, imported, skipped, ...mcpListPayload(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+// --- skills ---
+
+async function handleListSkills(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const view = await listSkills(host)
+    sendJson(response, 200, { ok: true, ...view })
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleSkillDetail(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  if (!isSkillName(name)) {
+    sendJson(response, 400, { error: 'invalid skill name' })
+    return
+  }
+  try {
+    const summary = (await listSkills(host)).skills.find(item => item.name === name) ?? null
+    const definition = await host.skills.get(name)
+    if (definition === undefined && summary === null) {
+      sendJson(response, 404, { error: `skill "${name}" not found` })
+      return
+    }
+    const path = definition?.path ?? summary?.path ?? null
+    const raw = path !== null ? readSkillFile(path) : null
+    const lock = (readSkillLock(host) ?? {})[name] ?? null
+    sendJson(response, 200, {
+      ok: true,
+      skill: summary,
+      definition: definition === undefined ? null : {
+        name: definition.name,
+        description: definition.description,
+        whenToUse: definition.whenToUse,
+        content: definition.content,
+        path: definition.path,
+        metadata: definition.metadata,
+        resourceBase: definition.resourceBase,
+      },
+      raw: raw === null ? null : {
+        file: path,
+        frontmatter: raw.frontmatter,
+        body: raw.body,
+      },
+      lock,
+    })
+  } catch (error) {
+    sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleCreateSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const result = createSkill(host, body)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.errors.join('; ') })
+      return
+    }
+    sendJson(response, 200, { ok: true, ...await listSkills(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleUpdateSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    // The name for a rename comes from the write payload; the URL name is
+    // the current one.
+    const result = updateSkill(host, name, body)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.errors.join('; ') })
+      return
+    }
+    sendJson(response, 200, { ok: true, ...await listSkills(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleToggleSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const enabled = body.enabled === true
+    const result = setSkillEnabled(host, name, enabled)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, ...await listSkills(host) })
   } catch (error) {
     sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
   }
