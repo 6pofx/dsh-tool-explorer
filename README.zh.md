@@ -1,3 +1,5 @@
+[English](README.md) | 中文
+
 # dsh-tool-explorer
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) 管理控制台：在 Web 设置页中**浏览、安装、更新、编辑与启停技能**，并**添加、编辑、启用/禁用、测试与监控 MCP 服务器**。

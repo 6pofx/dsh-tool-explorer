@@ -1,3 +1,5 @@
+English | [中文](README.zh.md)
+
 # dsh-tool-explorer
 
 Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): a Web settings page where you can **browse, install, update, edit and toggle skills**, and **add, edit, enable/disable, test and monitor MCP servers**.
