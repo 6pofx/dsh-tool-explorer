@@ -15,7 +15,7 @@ import { getDefaultEnvironment, StdioClientTransport } from '@modelcontextprotoc
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import {
   appendRowBlock, atomicWrite, insertRowBlock, isJsExpr, overrideRowBlock,
-  parsePatchText, readPatchOrNull, removeRowsForId,
+  parsePatchText, readPatchOrNull, removeDisabledRowsForId, removeRowsForId, toggleRowBlock,
   type PatchEntry,
 } from './patch-text.js'
 
@@ -463,6 +463,29 @@ export function removeServer(host: McpHost, id: string, options: WriteOptions): 
 /** Find one server view by id (loader + patch rows). */
 export function findView(host: McpHost, id: string): McpServerView | null {
   return listServers(host).find(view => view.id === id) ?? null
+}
+
+/**
+ * Enable/disable a server by writing a `disabled: true|false` row into the
+ * patch layer that owns the entry (profile when the row lives there, home
+ * when it does — an override in a lower layer cannot reach a higher layer's
+ * insert). A loader-only entry (no patch row) is toggled in the profile
+ * layer, which discards its row's source metadata.
+ */
+export function setServerEnabled(host: McpHost, id: string, enabled: boolean, options: WriteOptions): { ok: true } | { ok: false; error: string } {
+  const view = findView(host, id)
+  if (view === null) return { ok: false, error: `server "${id}" not found` }
+  const layer: PatchLayer = view.patchLayer === 'home' ? 'home' : 'profile'
+  const { path } = writeTarget(host, { ...options, layer })
+  const conflict = verifyFencing(path, options.expectedHash)
+  if (conflict !== null) return { ok: false, error: conflict }
+  const text = readPatchOrNull(path)
+  if (text === null) return { ok: false, error: 'the target patch layer does not exist yet' }
+  const cleaned = removeDisabledRowsForId(text, id)
+  const appended = appendRowBlock(cleaned, toggleRowBlock(id, !enabled))
+  if (!appended.ok) return { ok: false, error: appended.reason }
+  atomicWrite(path, appended.text)
+  return { ok: true }
 }
 
 /** One probe result. */

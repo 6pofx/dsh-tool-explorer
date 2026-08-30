@@ -14,7 +14,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { readJsonBody, sameOrigin, sendJson } from './http.js'
 import {
   addServer, existingServerNames, listServers, patchFilesView, patchHash, patchPathsOf, removeServer,
-  serverDetail, testConnection, updateServer, validateSpec,
+  serverDetail, setServerEnabled, testConnection, updateServer, validateSpec,
   type McpHost, type McpServerSpec, type PatchLayer, type WriteOptions,
 } from './mcp.js'
 import { normalizeServerName, scanAgentMcpSources } from './agents-mcp.js'
@@ -213,21 +213,28 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
         sendJson(response, 404, { error: 'not found' })
         return
       }
-      if (request.method === 'GET') {
-        handleServerDetail(host, request, response, id)
+      const isToggle = id.endsWith('/toggle')
+      const serverId = isToggle ? id.slice(0, -'/toggle'.length) : id
+      if (request.method === 'GET' && !isToggle) {
+        handleServerDetail(host, request, response, serverId)
         return
       }
-      if (request.method === 'PUT') {
+      if (request.method === 'PUT' && !isToggle) {
         if (!requireSameOrigin(request, response)) return
-        await handleUpdateServer(host, request, response, id)
+        await handleUpdateServer(host, request, response, serverId)
         return
       }
-      if (request.method === 'DELETE') {
+      if (request.method === 'DELETE' && !isToggle) {
         if (!requireSameOrigin(request, response)) return
-        handleRemoveServer(host, request, response, id)
+        handleRemoveServer(host, request, response, serverId)
         return
       }
-      response.writeHead(405, { allow: 'GET, PUT, DELETE' })
+      if (request.method === 'POST' && isToggle) {
+        if (!requireSameOrigin(request, response)) return
+        await handleToggleServer(host, request, response, serverId)
+        return
+      }
+      response.writeHead(405, { allow: 'GET, PUT, POST, DELETE' })
       response.end()
     },
   }))
@@ -410,6 +417,25 @@ async function handleTestServer(request: IncomingMessage, response: ServerRespon
     sendJson(response, 200, result)
   } catch (error) {
     sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleToggleServer(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, id: string): Promise<void> {
+  try {
+    const body = (await readJsonBody(request)) as Record<string, unknown>
+    const enabled = body.enabled === true
+    const query = new URL(request.url ?? '', 'http://localhost').searchParams
+    const result = setServerEnabled(host, id, enabled, {
+      layer: query.get('layer') === 'home' ? 'home' : 'profile',
+      expectedHash: query.get('expectedHash') ?? undefined,
+    })
+    if (!result.ok) {
+      sendJson(response, 409, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, ...mcpListPayload(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
   }
 }
 

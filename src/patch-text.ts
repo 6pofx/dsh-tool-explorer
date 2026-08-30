@@ -104,6 +104,23 @@ function blockTargetsId(block: string, id: string): boolean {
   return new RegExp(`^- id: ['\"]?${escapeRegExp(id)}['\"]?\\s*(?:#.*)?$`, 'u').test(first)
 }
 
+/**
+ * Remove only `- id: X` + `disabled: true|false` blocks for an id, keeping
+ * its insert/override rows intact (the enable/disable toggle path).
+ */
+export function removeDisabledRowsForId(text: string, id: string): string {
+  const trimmed = text.trimEnd()
+  const kept = rowBlocks(trimmed).filter(block => {
+    const lines = block.split(/\r?\n/u)
+    const first = (lines[0] ?? '').trimEnd()
+    if (!new RegExp(`^- id: ['\"]?${escapeRegExp(id)}['\"]?\\s*(?:#.*)?$`, 'u').test(first)) return true
+    return !/^\s+disabled:\s*(?:true|false)\s*(?:#.*)?$/u.test(lines[1] ?? '')
+  })
+  const next = kept.length > 0 ? kept.join('\n') : '[]'
+  const withPlaceholder = restorePlaceholder(next)
+  return withPlaceholder === text ? text : withPlaceholder
+}
+
 /** Split patch text into top-level row blocks (each starting with `- ` at column 0). */
 function rowBlocks(text: string): string[] {
   const lines = text.split(/\r?\n/u)

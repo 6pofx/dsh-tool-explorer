@@ -324,6 +324,23 @@ export function McpSection({ t }: { t: Translate }) {
     }
   }
 
+  const toggleEnabled = async (view: McpServerView) => {
+    setDeleting(view.id)
+    try {
+      const layerKey = view.patchLayer === 'home' ? 'home' : 'profile'
+      const hash = list?.files[layerKey]?.hash
+      const result = await fetchJson(`/dsh-tool-explorer/api/mcp/${encodeURIComponent(view.id)}/toggle?layer=${layerKey}&expectedHash=${encodeURIComponent(hash ?? '')}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled: !view.enabled }),
+      })
+      applyList(result)
+    } catch (error) {
+      setLoadError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setDeleting(null)
+    }
+  }
+
   const test = async (view: McpServerView) => {
     setTestStates(prev => ({ ...prev, [view.id]: 'pending' }))
     try {
@@ -515,6 +532,7 @@ export function McpSection({ t }: { t: Translate }) {
           h('div', { style: styles.actions }, [
             h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => void test(view), disabled: testStates[view.id] === 'pending' }, t('mcpTest')),
             h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => { setDraft(draftFrom(view)); setFormError(null) } }, t('mcpEdit')),
+            h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => void toggleEnabled(view), disabled: deleting === view.id }, view.enabled ? t('mcpDisable') : t('mcpEnable')),
             h('button', { style: { ...styles.button, ...styles.buttonSmall, ...styles.buttonDanger }, onClick: () => { if (window.confirm(`${t('mcpConfirmRemove')} ${view.serverName}?`)) void remove(view) }, disabled: deleting === view.id }, t('mcpDelete')),
             h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => void toggleDetail(view) }, t('mcpToolsDetail')),
           ]),

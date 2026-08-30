@@ -64,6 +64,9 @@ function composeRows(text) {
     else if (typeof row.id === 'string' && row.config !== undefined) {
       const target = byId.get(row.id)
       if (target) target.config = row.config
+    } else if (typeof row.id === 'string' && typeof row.disabled === 'boolean') {
+      const target = byId.get(row.id)
+      if (target) target.disabled = row.disabled
     }
   }
   return base
@@ -249,7 +252,16 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   check('edit succeeds', edit.status === 200, JSON.stringify(edit.payload))
   check('override row appended', /^- id: mcp-echo[\s\S]*config:/mu.test(readPatch(patchPath)) && readPatch(patchPath).trim().split(/\r?\n/).length > 4)
 
-  const removed = await call(`/dsh-tool-explorer/api/mcp/mcp-echo`, { method: 'DELETE', query: `?layer=profile&expectedHash=${edit.payload.files.profile.hash}` })
+  // --- enable/disable toggle ---
+  const off = await call(`/dsh-tool-explorer/api/mcp/mcp-echo/toggle`, { method: 'POST', body: { enabled: false }, query: `?layer=profile&expectedHash=${edit.payload.files.profile.hash}` })
+  check('toggle disable succeeds', off.status === 200, JSON.stringify(off.payload))
+  check('disabled row written', /^- id: mcp-echo\r?\n  disabled: true/mu.test(readPatch(patchPath)))
+  check('list reflects disabled', off.payload.servers.find(s => s.id === 'mcp-echo')?.state === 'disabled')
+  const on = await call(`/dsh-tool-explorer/api/mcp/mcp-echo/toggle`, { method: 'POST', body: { enabled: true }, query: `?layer=profile&expectedHash=${off.payload.files.profile.hash}` })
+  check('toggle enable succeeds', on.status === 200 && on.payload.servers.find(s => s.id === 'mcp-echo')?.state === 'active', JSON.stringify(on.payload))
+  check('disabled row removed on enable', !/^- id: mcp-echo\r?\n  disabled: true/mu.test(readPatch(patchPath)))
+
+  const removed = await call(`/dsh-tool-explorer/api/mcp/mcp-echo`, { method: 'DELETE', query: `?layer=profile&expectedHash=${on.payload.files.profile.hash}` })
   check('remove succeeds', removed.status === 200, JSON.stringify(removed.payload))
   const afterRemoveText = readPatch(patchPath)
   const afterRemoveRows = parsePatchText(afterRemoveText)
