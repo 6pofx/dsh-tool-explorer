@@ -416,6 +416,90 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   const parsedCrlf = skillsModule.readSkillFile(complexFile)
   check('CRLF frontmatter parses', parsedCrlf !== null && parsedCrlf.frontmatter.description === 'CRLF-safe skill', JSON.stringify(parsedCrlf))
   writeFileSync(complexFile, '---\nname: echo-skill\ndescription: Echo test skill\n---\n\n# Echo\nHello\n')
+
+  // --- M5: independent model/user invocation axes ---
+  const invModelOff = await call('/dsh-tool-explorer/api/skills/echo-skill/invocation', { method: 'POST', body: { model: false } })
+  check('invocation: model-only off succeeds', invModelOff.status === 200, JSON.stringify(invModelOff.payload))
+  const invModelText = readFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), 'utf8')
+  check('model-only off writes one key', invModelText.includes('disable-model-invocation: true') && !invModelText.includes('user-invocable'))
+  check('list keeps user axis on', invModelOff.payload.skills.find(item => item.name === 'echo-skill')?.modelInvocable === false
+    && invModelOff.payload.skills.find(item => item.name === 'echo-skill')?.userInvocable === true
+    && invModelOff.payload.skills.find(item => item.name === 'echo-skill')?.disabled === false)
+
+  const invUserOff = await call('/dsh-tool-explorer/api/skills/echo-skill/invocation', { method: 'POST', body: { model: true, user: false } })
+  check('invocation: user-only off succeeds', invUserOff.status === 200, JSON.stringify(invUserOff.payload))
+  const invUserText = readFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), 'utf8')
+  check('user-only off writes user-invocable only', invUserText.includes('user-invocable: false') && !invUserText.includes('disable-model-invocation'))
+
+  const invBack = await call('/dsh-tool-explorer/api/skills/echo-skill/invocation', { method: 'POST', body: { model: true, user: true } })
+  check('invocation: both back on succeeds', invBack.status === 200, JSON.stringify(invBack.payload))
+  const invBackText = readFileSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md'), 'utf8')
+  check('both axes restored removes all invocation keys', !invBackText.includes('disable-model-invocation') && !invBackText.includes('user-invocable'))
+  const invEmpty = await call('/dsh-tool-explorer/api/skills/echo-skill/invocation', { method: 'POST', body: {} })
+  check('invocation: empty patch rejected (400)', invEmpty.status === 400)
+  const invRuntime = await call('/dsh-tool-explorer/api/skills/runtime-sample/invocation', { method: 'POST', body: { model: false } })
+  check('invocation: non-editable skill rejected (400)', invRuntime.status === 400)
+
+  // --- M5: recoverable trash ---
+  const trashRoot = join(dshHome, 'skills-trash')
+  const del = await call('/dsh-tool-explorer/api/skills/echo-skill', { method: 'DELETE' })
+  check('delete moves skill to trash', del.status === 200 && del.payload.trashed?.id !== undefined, JSON.stringify(del.payload))
+  check('skill dir removed from root', !existsSync(join(userSkillsRoot, 'echo-skill')))
+  check('trash copy exists on disk', existsSync(join(trashRoot, del.payload.trashed.id)))
+  check('list payload carries trashCount', del.payload.trashCount === 1)
+  const lockAfterDel = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('lock entry removed on delete (snapshotted)', lockAfterDel.skills['echo-skill'] === undefined)
+
+  const runtimeDel = await call('/dsh-tool-explorer/api/skills/runtime-sample', { method: 'DELETE' })
+  check('non-editable delete rejected (400)', runtimeDel.status === 400)
+
+  const trashList = await call('/dsh-tool-explorer/api/skills/trash')
+  check('trash lists the item', trashList.status === 200 && trashList.payload.items.some(item => item.name === 'echo-skill' && item.managed && item.exists), JSON.stringify(trashList.payload))
+  const trashId = trashList.payload.items.find(item => item.name === 'echo-skill').id
+
+  const restored = await call('/dsh-tool-explorer/api/skills/trash/restore', { method: 'POST', body: { id: trashId } })
+  check('restore succeeds', restored.status === 200 && restored.payload.restored === 'echo-skill', JSON.stringify(restored.payload))
+  check('skill dir restored to root', existsSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md')))
+  check('trash emptied by restore', restored.payload.items.length === 0)
+  const lockAfterRestore = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('lock entry restored from snapshot', lockAfterRestore.skills['echo-skill']?.sourceUrl === 'https://github.com/vercel-labs/skills.git')
+
+  const restoreConflict = await call('/dsh-tool-explorer/api/skills/trash/restore', { method: 'POST', body: { id: 'missing-id' } })
+  check('restore of unknown id rejected (400)', restoreConflict.status === 400)
+
+  // delete again → restore again (keeps the fixture intact for later sections)
+  const del2 = await call('/dsh-tool-explorer/api/skills/echo-skill', { method: 'DELETE' })
+  const trashList2 = await call('/dsh-tool-explorer/api/skills/trash')
+  const trashId2 = trashList2.payload.items.find(item => item.name === 'echo-skill').id
+  const restored2 = await call('/dsh-tool-explorer/api/skills/trash/restore', { method: 'POST', body: { id: trashId2 } })
+  check('second delete→restore round-trip', restored2.status === 200 && existsSync(join(userSkillsRoot, 'echo-skill', 'SKILL.md')))
+  const lockAfterRestore2 = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('lock entry present after second restore', lockAfterRestore2.skills['echo-skill'] !== undefined)
+
+  // permanent purge path on a scratch skill
+  await call('/dsh-tool-explorer/api/skills', {
+    method: 'POST',
+    body: { root: '~/.agents/skills', name: 'scratch-skill', description: 'Scratch skill', modelInvocable: true, userInvocable: true, body: '# scratch' },
+  })
+  await call('/dsh-tool-explorer/api/skills/scratch-skill', { method: 'DELETE' })
+  const scratchTrash = (await call('/dsh-tool-explorer/api/skills/trash')).payload.items.find(item => item.name === 'scratch-skill')
+  const purged = await call('/dsh-tool-explorer/api/skills/trash/purge', { method: 'POST', body: { id: scratchTrash.id } })
+  check('purge succeeds', purged.status === 200 && purged.payload.purged === 'scratch-skill', JSON.stringify(purged.payload))
+  check('purge removes the trash copy', !existsSync(join(trashRoot, scratchTrash.id)))
+  check('purge drops manifest entry', purged.payload.items.length === 0)
+
+  // empty-trash path on another scratch skill
+  await call('/dsh-tool-explorer/api/skills', {
+    method: 'POST',
+    body: { root: '~/.agents/skills', name: 'temp-skill', description: 'Temporary skill', modelInvocable: true, userInvocable: true, body: '# tmp' },
+  })
+  await call('/dsh-tool-explorer/api/skills/temp-skill', { method: 'DELETE' })
+  const trashList3 = await call('/dsh-tool-explorer/api/skills/trash')
+  check('scratch delete lands in trash', trashList3.payload.items.length === 1 && trashList3.payload.items[0].name === 'temp-skill')
+  const emptied = await call('/dsh-tool-explorer/api/skills/trash/empty', { method: 'POST', body: {} })
+  check('empty trash purges everything', emptied.status === 200 && emptied.payload.purged === 1, JSON.stringify(emptied.payload))
+  const trashList4 = await call('/dsh-tool-explorer/api/skills/trash')
+  check('trash manifest empty after empty', trashList4.payload.items.length === 0)
 }
 
 // ---------- 4.5 git install ecosystem ----------
@@ -529,10 +613,15 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   check('reinstall conflicts (409)', conflict.status === 409)
 
   const removed = await call('/dsh-tool-explorer/api/skills/alpha-skill', { method: 'DELETE' })
-  check('uninstall succeeds', removed.status === 200, JSON.stringify(removed.payload))
-  check('skill dir removed', !existsSync(installedDir))
+  check('uninstall moves skill to trash', removed.status === 200, JSON.stringify(removed.payload))
+  check('skill dir removed from root', !existsSync(installedDir))
   const lockFinal = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
   check('lock entry removed, others kept', lockFinal.skills['alpha-skill'] === undefined && lockFinal.skills['echo-skill'] !== undefined)
+  const trashAfterUninstall = await call('/dsh-tool-explorer/api/skills/trash')
+  const alphaTrash = trashAfterUninstall.payload.items.find(item => item.name === 'alpha-skill')
+  check('installed skill recoverable from trash', alphaTrash !== undefined && alphaTrash.managed === true && alphaTrash.exists === true)
+  const alphaPurge = await call('/dsh-tool-explorer/api/skills/trash/purge', { method: 'POST', body: { id: alphaTrash.id } })
+  check('purged from trash', alphaPurge.status === 200 && alphaPurge.payload.items.length === 0)
 
   delete host.fetchImpl
 }
