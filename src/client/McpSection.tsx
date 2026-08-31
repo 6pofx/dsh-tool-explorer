@@ -220,6 +220,16 @@ export function McpSection({ t }: { t: Translate }) {
 
   useEffect(() => { void load() }, [load])
 
+  // Re-fetch when the page becomes visible again so the list never shows a
+  // stale snapshot (dsh restarts, long idle, etc.).
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load])
+
   const applyList = (payload: unknown) => {
     setList(payload as McpListPayload)
   }

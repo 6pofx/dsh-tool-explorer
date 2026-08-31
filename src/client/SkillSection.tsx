@@ -157,6 +157,16 @@ export function SkillSection({ t }: { t: Translate }) {
 
   useEffect(() => { void load() }, [load])
 
+  // Re-fetch when the page becomes visible again (e.g. after a dsh restart
+  // or long idle) so the list never shows a stale catalog snapshot.
+  useEffect(() => {
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') void load()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [load])
+
   const applyList = (payload: unknown) => {
     setList(payload as SkillListPayload)
   }
