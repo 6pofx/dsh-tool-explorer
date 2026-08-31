@@ -12,8 +12,10 @@
 
 **技能**
 - 全量目录（项目/用户/内置/插件各来源）与共享 `.skill-lock.json` 合并展示
+- **按来源分级浏览**：可折叠来源树（项目 .dsh → 项目 .agents → 自定义 → `~/.dsh/skills` → `~/.agents/skills` → 插件 → 内置），来源下再按 provider 分组，附已加载/禁用计数；支持来源、状态筛选与平铺视图
 - 搜索、详情预览、在线新建/编辑（kebab-case 校验、frontmatter 表单、Markdown 正文）
-- 启停：frontmatter 双开关（对模型目录与 `/` 菜单即时生效）
+- **独立模型 / 用户调用开关**：可只关模型调用（`disable-model-invocation`，保留 `/` 菜单），也可只关用户调用；双关 = 完整禁用
+- **可恢复回收站**：删除用户根技能 → 移入 `<dshHome>/skills-trash`（锁文件条目快照存档）；还原可字节级恢复（含锁条目），永久删除/清空则彻底移除
 - GitHub 安装：URL 解析（`owner/repo`、tree 路径、`#branch`）、候选预览、安装到 `~/.agents/skills` 或 `~/.dsh/skills`、检查更新/应用（备份+回滚）、卸载
 - `skillFolderHash` 与 Skills CLI（`npx skills`）字节级兼容
 
@@ -40,7 +42,7 @@ dsh plugin --profile web add dsh-tool-explorer
 pnpm install
 pnpm run typecheck   # host + client 源码类型检查
 pnpm run build       # tsc host -> lib/，tsdown client -> client/client.js（含包装与校验）
-pnpm test:self       # 80+ 断言：mock host CRUD、跨 agent 导入、GitHub 安装、真实 stdio 探测
+pnpm test:self       # 116+ 断言：mock host CRUD、跨 agent 导入、GitHub 安装、回收站、真实 stdio 探测
 ```
 
 本地安装循环：
@@ -48,10 +50,21 @@ pnpm test:self       # 80+ 断言：mock host CRUD、跨 agent 导入、GitHub �
 ```bash
 pnpm pack
 dsh plugin --profile web remove dsh-tool-explorer
-dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.3.0.tgz
+dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.4.0.tgz
 ```
 
 > ⚠️ 新增运行时依赖（如 `tar`）必须**重新打包并重装** —— 只拷贝 `lib/` 不够。
+
+## 参考实现
+
+M5 功能集（来源分级浏览、独立调用开关、可恢复回收站）参考了以下社区插件（克隆在 `.ref/` 下备查）：
+
+- [cheshireez/dsh-skill-hub](https://github.com/cheshireez/dsh-skill-hub) —— 基于官方 `ctx.skills` 注册表的 GUI 技能中枢；其 `.trash/` 重命名 + 还原 + 清空模式启发了本插件的可恢复回收站
+- [SeverusZh/dsh-skills-mcp-group-manager](https://github.com/SeverusZh/dsh-skills-mcp-group-manager) —— 分组管理与"影子 provider 过滤模型技能目录"
+- [BAIKAI23333/dsh-skills-manager](https://github.com/BAIKAI23333/dsh-skills-manager) —— 设置页技能管理器
+- [peiqi10086/dsh-skills-market](https://github.com/peiqi10086/dsh-skills-market) —— 侧边栏技能面板（用户/项目/内置）+ SkillHub 商城
+
+设计取舍：启停沿用平台文档化的 frontmatter 双开关（`disable-model-invocation` / `user-invocable`），而非 skill-hub 的 `SKILL.md.disabled` 重命名；回收站放在**技能根之外**，避免 provider watcher 观察到干扰。
 
 ## 目录结构
 
@@ -60,7 +73,8 @@ dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.3.0.t
 | `src/index.ts` | host 入口；从注入服务组装普通 host 对象（绝不修改 Cordis scope Proxy） |
 | `src/routes.ts` | `/dsh-tool-explorer/api/*` 路由（写操作强制同源校验） |
 | `src/mcp.ts` | MCP 管理：patch 层增删改、启停、状态推导、SDK 探测 |
-| `src/skills.ts` | 技能目录（注册表 × 锁文件 × 磁盘）、编辑/启停、frontmatter 解析（完整 YAML） |
+| `src/skills.ts` | 技能目录（注册表 × 锁文件 × 磁盘）、编辑/启停、独立模型/用户调用开关、frontmatter 解析（完整 YAML） |
+| `src/skills-trash.ts` | 可恢复回收站：删除入站、还原、永久删除、清空（`<dshHome>/skills-trash` + manifest） |
 | `src/skills-install.ts` | GitHub 安装生态：tarball 下载（区域代理）、候选发现、锁文件 v3、CLI 兼容目录哈希 |
 | `src/agents-mcp.ts` | 跨 agent MCP 导入（JSON + Codex TOML 子集解析） |
 | `src/patch-text.ts` | patch 层方言：解析（`!!js` 容错）、行级手术编辑、`[]` 占位符处理、原子写 |

@@ -231,6 +231,7 @@ DSH 是一个 Cordis 插件架构的 Agent Harness。当前生态中：
 | M2 技能浏览+编辑 | 全量列表/搜索/详情/遮蔽分析 → 编辑/新建（表单+校验）→ 启停切换 | 手工编辑的技能秒级（watcher）出现在系统目录 |
 | M3 技能安装生态 | GitHub 安装（tarball/预览/多候选）/更新/卸载 + 锁文件 v3 读写 | `npx skills check` 能识别本插件安装的技能（hash 兼容验证） |
 | M4 打磨发布 | 完整双语、错误态、文档、npm 发布 + dshmarket 上架、升级说明（host 改动需重启的发布提示） | 市场可安装；README 双语 |
+| M5 来源分级浏览+独立调用+回收站 | 按来源分级浏览（来源→provider 树+筛选）→ 独立模型/用户调用开关 → 删除进可恢复回收站（还原/永久删除/清空） | 分组树正确合并 registry；模型/用户可独立开合且 watcher 即时生效；删除→回收站→还原字节级恢复（含锁条目） |
 
 ---
 
@@ -271,6 +272,7 @@ DSH 是一个 Cordis 插件架构的 Agent Harness。当前生态中：
 | M2 技能浏览/编辑/启停 | ✅ 完成：目录视图（registry × 锁文件 × 磁盘扫描合并、来源/可编辑/managed/隐藏标记）、搜索、详情与正文预览、**新建/编辑（内联表单，kebab 校验、frontmatter 序列化、改名=目录改名+锁文件 key 迁移）**、**启停（frontmatter 双开关 D6）**；自测 54 项全绿；真实环境验证：12 技能正确合并（含 bundled 只读、非锁文件安装区分）、7 个 MCP 服务器状态/工具数全部正确 |
 | M3 技能安装生态 | ✅ 完成：GitHub URL 解析（owner/repo、tree 路径、#branch、非 github 拒绝）、**codeload tarball 下载（默认经 gh-proxy 代理，实测 HEAD 直通）**、多候选发现（根/`skills/*`/一级子目录/指定路径）、安装预览→安装（`.skill-lock.json` v3 全字段写入）、**`skillFolderHash` 与 Skills CLI 字节级兼容**（算法取自 skills@1.5.23 源码、5 个本机已装技能 MATCH 验证 + 自测独立实现对比）、检查更新（hash 对比）、更新（备份+替换+时间戳）、卸载（目录+锁条目）；自测 75 项全绿；真实端到端：预览 16 个候选 → 安装 algorithmic-art（watcher 即时出现在会话技能目录）→ 卸载（即时消失） |
 | M4 打磨发布 | 未开始（双语完善、npm 发布、dshmarket 上架、文档） |
+| M5 来源分级浏览+独立调用+回收站 | ✅ 完成：**按来源分级浏览**（来源→provider 可折叠树，含已加载/禁用计数；来源/状态筛选、平铺视图开关）、**独立模型/用户调用开关**（`POST /api/skills/:name/invocation`，只写对应 frontmatter 键，模型与用户轴互不影响）、**可恢复回收站**（`<dshHome>/skills-trash` + manifest v1；删除=移入回收站并快照锁条目，还原=原路径+锁条目字节级恢复，永久删除/清空；EXDEV 跨卷回退复制；参考 dsh-skill-hub 的 `.trash/` 模式，但放在技能根之外避免 watcher 干扰）；自测 116 项全绿（含 30 项 M5 新增） |
 
 > 待定：包名是否可用（`dsh-tool-explorer` 或 scoped `@<user>/dsh-tool-explorer`，M0 落定时用 npm 查重）。
 
