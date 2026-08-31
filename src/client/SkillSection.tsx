@@ -146,12 +146,20 @@ export function SkillSection({ t }: { t: Translate }) {
   const [installResult, setInstallResult] = useState<string | null>(null)
   const [updateStates, setUpdateStates] = useState<Record<string, { checking?: boolean; available?: boolean; busy?: boolean; error?: string }>>({})
 
+  const [loading, setLoading] = useState(false)
+
   const load = useCallback(async () => {
     setError(null)
+    setLoading(true)
     try {
-      setList(await fetchJson('/dsh-tool-explorer/api/skills') as SkillListPayload)
+      const payload = await fetchJson('/dsh-tool-explorer/api/skills') as SkillListPayload
+      setList(payload)
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      console.error('[dsh-tool-explorer] skills list load failed:', message)
+      setError(message)
+    } finally {
+      setLoading(false)
     }
   }, [])
 

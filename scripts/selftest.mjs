@@ -401,6 +401,20 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   writeFileSync(complexFile, '---\nname: echo-skill\ndescription: Echo test skill\nwhenToUse: |-\n  When the user asks\n  for an echo.\nmetadata:\n  tags: [a, b]\n---\n\n# Echo\nHello\n')
   const parsedComplex = skillsModule.readSkillFile(complexFile)
   check('block-scalar frontmatter parses', parsedComplex !== null && parsedComplex.frontmatter.description === 'Echo test skill' && String(parsedComplex.frontmatter.whenToUse).includes('asks'))
+
+  // Regression: a UTF-8 BOM at the start of SKILL.md must not hide the
+  // frontmatter (Windows editors add it; without stripping, the delimiter
+  // never matches and the description came back as the placeholder).
+  writeFileSync(complexFile, '\uFEFF---\nname: echo-skill\ndescription: BOM-safe skill\n---\n\n# Echo\nHello\n')
+  const parsedBom = skillsModule.readSkillFile(complexFile)
+  check('BOM-prefixed frontmatter parses', parsedBom !== null && parsedBom.frontmatter.description === 'BOM-safe skill', JSON.stringify(parsedBom))
+
+  // Regression: CRLF line endings (Windows/Git autocrlf) must also parse —
+  // a literal `---\n` delimiter never matches `---\r\n`, which made the
+  // description come back as the placeholder for CRLF files.
+  writeFileSync(complexFile, '---\r\nname: echo-skill\r\ndescription: CRLF-safe skill\r\n---\r\n\r\n# Echo\r\nHello\r\n')
+  const parsedCrlf = skillsModule.readSkillFile(complexFile)
+  check('CRLF frontmatter parses', parsedCrlf !== null && parsedCrlf.frontmatter.description === 'CRLF-safe skill', JSON.stringify(parsedCrlf))
   writeFileSync(complexFile, '---\nname: echo-skill\ndescription: Echo test skill\n---\n\n# Echo\nHello\n')
 }
 

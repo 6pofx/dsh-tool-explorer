@@ -79,7 +79,12 @@ export function agentScopeOf(host: SkillsHost): unknown | undefined {
   try {
     for (const entry of agents.list() ?? []) {
       if (entry === null || typeof entry !== 'object') continue
-      if (entry.status !== 'running' || typeof entry.id !== 'string' || entry.id === '') continue
+      // Any live agent entry is a valid viewing scope — we only READ the
+      // registry, so an idle (not currently running) agent is fine. The
+      // running gate was borrowed from dshmarket's mutation guard and
+      // produced the misleading host-only view while the page was open
+      // without an active turn.
+      if (typeof entry.id !== 'string' || entry.id === '') continue
       const scope = agents.get?.(entry.id)
       if (scope !== undefined) return scope
     }
@@ -312,7 +317,10 @@ export function readSkillFile(path: string): ParsedSkillFile | null {
   } catch {
     return null
   }
-  const match = /^---\n([\s\S]*?)\n---\n?/.exec(text)
+  // A UTF-8 BOM (Windows editors) or CRLF line endings (common on Windows,
+  // Git autocrlf) must not hide the frontmatter; tolerate both.
+  if (text.charCodeAt(0) === 0xFEFF) text = text.slice(1)
+  const match = /^---[ \t]*\r?\n([\s\S]*?)\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
   if (match === null) {
     return { frontmatter: {} as SkillFrontmatter, body: text.trim() }
   }
