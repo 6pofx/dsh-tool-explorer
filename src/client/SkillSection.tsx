@@ -172,7 +172,7 @@ export function SkillSection({ t }: { t: Translate }) {
   const [installOpen, setInstallOpen] = useState(false)
   const [installUrl, setInstallUrl] = useState('')
   const [installPreview, setInstallPreview] = useState<{ preview: { target: Record<string, string>; sourceUrl: string; candidates: Array<{ skillPath: string; name: string; description: string; bodyPreview: string }> } } | null>(null)
-  const [installSelected, setInstallSelected] = useState<string | null>(null)
+  const [installSelected, setInstallSelected] = useState<string[]>([])
   const [installRoot, setInstallRoot] = useState<'~/.agents/skills' | '~/.dsh/skills'>('~/.agents/skills')
   const [installBusy, setInstallBusy] = useState(false)
   const [installError, setInstallError] = useState<string | null>(null)
@@ -365,7 +365,7 @@ export function SkillSection({ t }: { t: Translate }) {
     setInstallError(null)
     setInstallResult(null)
     setInstallPreview(null)
-    setInstallSelected(null)
+    setInstallSelected([])
     try {
       const result = await fetchJson('/dsh-tool-explorer/api/skills/install-preview', {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -373,7 +373,9 @@ export function SkillSection({ t }: { t: Translate }) {
       })
       setInstallPreview(result as typeof installPreview)
       const candidates = (result as typeof installPreview)?.preview.candidates ?? []
-      if (candidates.length === 1) setInstallSelected(candidates[0]!.name)
+      // Default: everything selected — a multi-candidate repo is usually
+      // installed wholesale; uncheck what is not wanted.
+      setInstallSelected(candidates.map(candidate => candidate.name))
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -381,26 +383,39 @@ export function SkillSection({ t }: { t: Translate }) {
     }
   }
 
+  const toggleCandidate = (name: string) => {
+    setInstallSelected(prev => prev.includes(name) ? prev.filter(item => item !== name) : [...prev, name])
+  }
+
   const doInstall = async () => {
-    if (installPreview === null || installSelected === null) return
+    if (installPreview === null) return
+    const candidates = installPreview.preview.candidates.filter(item => installSelected.includes(item.name))
+    if (candidates.length === 0) return
     setInstallBusy(true)
     setInstallError(null)
     setInstallResult(null)
     try {
-      const candidate = installPreview.preview.candidates.find(item => item.name === installSelected)
       const result = await fetchJson('/dsh-tool-explorer/api/skills/install', {
         method: 'POST', headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
           target: installPreview.preview.target,
           sourceUrl: installPreview.preview.sourceUrl,
-          candidate,
+          candidates,
           root: installRoot,
         }),
       })
       applyList(result)
-      setInstallResult(t('installDone').replace('{name}', installSelected))
-      setInstallPreview(null)
-      setInstallSelected(null)
+      const installedNames: string[] = (result as { installed?: Array<{ name: string }> }).installed?.map(item => item.name) ?? []
+      const skipped: Array<{ name: string; error: string }> = (result as { skipped?: Array<{ name: string; error: string }> }).skipped ?? []
+      setInstallResult(t('installDoneMany').replace('{n}', String(installedNames.length)))
+      if (skipped.length > 0) {
+        setInstallError(skipped.map(item => `${item.name}: ${item.error}`).join('\n'))
+        // Keep the failed selections so they can be retried after fixing the cause.
+        setInstallSelected(candidates.filter(item => skipped.some(s => s.name === item.name)).map(item => item.name))
+      } else {
+        setInstallPreview(null)
+        setInstallSelected([])
+      }
     } catch (err) {
       setInstallError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -619,7 +634,7 @@ export function SkillSection({ t }: { t: Translate }) {
   return h('div', { style: { display: 'flex', flexDirection: 'column', gap: 8 } }, [
     h('div', { style: styles.toolbar }, [
       h('button', { style: { ...styles.button, ...styles.buttonPrimary }, onClick: () => { setEditingName(null); setDraft(emptyDraft()); setFormError(null) } }, t('skillNew')),
-      h('button', { style: styles.button, onClick: () => { setInstallOpen(true); setInstallError(null); setInstallResult(null); setInstallPreview(null); setInstallSelected(null) } }, t('skillInstallGit')),
+      h('button', { style: styles.button, onClick: () => { setInstallOpen(true); setInstallError(null); setInstallResult(null); setInstallPreview(null); setInstallSelected([]) } }, t('skillInstallGit')),
       h('button', { style: { ...styles.button, ...(trashCount > 0 ? styles.buttonDanger : {}) }, onClick: () => { setTrashNote(null); setTrashOpen(!trashOpen) } }, `${t('skillTrash')} (${trashCount})`),
       h('input', { style: styles.search, value: query, placeholder: t('skillSearch'), onChange: (event: React.ChangeEvent<HTMLInputElement>) => setQuery(event.target.value) }),
       h('select', { style: styles.input, value: sourceFilter, onChange: (event: React.ChangeEvent<HTMLSelectElement>) => setSourceFilter(event.target.value) }, [
@@ -665,14 +680,19 @@ export function SkillSection({ t }: { t: Translate }) {
         ? (installPreview.preview.candidates.length === 0
           ? h('div', { style: styles.muted }, t('installNoCandidate'))
           : h('div', { style: { display: 'flex', flexDirection: 'column', gap: 6 } }, [
+              h('div', { style: styles.actions }, [
+                h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => setInstallSelected(installPreview.preview.candidates.map(candidate => candidate.name)), disabled: installBusy }, t('installSelectAll')),
+                h('button', { style: { ...styles.button, ...styles.buttonSmall }, onClick: () => setInstallSelected([]), disabled: installBusy }, t('installClearAll')),
+                h('span', { style: styles.muted }, t('installSelectedCount').replace('{n}', String(installSelected.length))),
+              ]),
               installPreview.preview.candidates.map(candidate => h('label', { key: candidate.name, style: { ...styles.checkRow } }, [
-                h('input', { type: 'radio', name: 'install-candidate', checked: installSelected === candidate.name, onChange: () => setInstallSelected(candidate.name) }),
+                h('input', { type: 'checkbox', checked: installSelected.includes(candidate.name), onChange: () => toggleCandidate(candidate.name), disabled: installBusy }),
                 h('span', { style: { fontWeight: 600 } }, candidate.name),
                 h('span', { style: styles.muted }, `[${candidate.skillPath || 'repo root'}]`),
                 h('span', { style: styles.muted }, candidate.description),
               ])),
               h('div', { style: styles.actions }, [
-                h('button', { style: { ...styles.button, ...styles.buttonPrimary }, onClick: () => void doInstall(), disabled: installBusy || installSelected === null }, t('skillInstallRun')),
+                h('button', { style: { ...styles.button, ...styles.buttonPrimary }, onClick: () => void doInstall(), disabled: installBusy || installSelected.length === 0 }, t('skillInstallRun')),
               ]),
             ]))
         : null,

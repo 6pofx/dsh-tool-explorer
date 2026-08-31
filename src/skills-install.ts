@@ -235,13 +235,18 @@ export function githubProxyOf(host: SkillsHost): string | null {
   return process.env.DSH_TE_GITHUB_PROXY ?? process.env.DSHM_GITHUB_PROXY ?? DEFAULT_GITHUB_PROXY
 }
 
-/** Install one candidate; returns the lock entry written. */
-export async function installCandidate(
+/**
+ * Install one candidate from an already-extracted tarball into a user root,
+ * filling the shared lock map. The tarball is fetched/extracted by the
+ * caller so a multi-selection download happens exactly once.
+ */
+async function installOneFromExtracted(
   host: SkillsHost,
+  extracted: string,
   preview: InstallPreview,
   candidate: InstallCandidate,
   rootLabel: '~/.agents/skills' | '~/.dsh/skills',
-  signal?: AbortSignal,
+  lock: Record<string, LockEntry>,
 ): Promise<{ ok: true; name: string; lock: LockEntry } | { ok: false; error: string }> {
   const target = preview.target
   const root = userSkillRoots(host).find(item => item.label === rootLabel)
@@ -254,23 +259,17 @@ export async function installCandidate(
   if (existsSync(dest)) {
     return { ok: false, error: `a skill named "${name}" already exists in ${rootLabel}` }
   }
-  const buffer = await fetchRepoTarball(host, target, signal)
-  const extracted = await extractTarball(buffer)
   const sourceDir = candidate.skillPath === '' ? extracted : join(extracted, candidate.skillPath)
   if (!existsSync(join(sourceDir, 'SKILL.md'))) {
-    rmSync(extracted, { recursive: true, force: true })
     return { ok: false, error: `SKILL.md not found at repo path "${candidate.skillPath}"` }
   }
   // Verify the installed name matches the frontmatter (rename safety).
   const parsed = readSkillFile(join(sourceDir, 'SKILL.md'))
   if (parsed === null || parsed.frontmatter.name !== name) {
-    rmSync(extracted, { recursive: true, force: true })
     return { ok: false, error: 'frontmatter name changed between preview and install; retry' }
   }
-  const lock = readSkillLock(host) ?? {}
   mkdirSync(dest, { recursive: true })
   cpSync(sourceDir, dest, { recursive: true })
-  rmSync(extracted, { recursive: true, force: true })
   const skillFolderHash = await computeSkillFolderHash(dest)
   const now = new Date().toISOString()
   lock[name] = {
@@ -282,8 +281,60 @@ export async function installCandidate(
     installedAt: now,
     updatedAt: now,
   }
-  writeSkillLock(host, lock)
   return { ok: true, name, lock: lock[name]! }
+}
+
+/** Install one candidate; returns the lock entry written. */
+export async function installCandidate(
+  host: SkillsHost,
+  preview: InstallPreview,
+  candidate: InstallCandidate,
+  rootLabel: '~/.agents/skills' | '~/.dsh/skills',
+  signal?: AbortSignal,
+): Promise<{ ok: true; name: string; lock: LockEntry } | { ok: false; error: string }> {
+  const buffer = await fetchRepoTarball(host, preview.target, signal)
+  const extracted = await extractTarball(buffer)
+  const lock = readSkillLock(host) ?? {}
+  try {
+    const result = await installOneFromExtracted(host, extracted, preview, candidate, rootLabel, lock)
+    if (!result.ok) return result
+    writeSkillLock(host, lock)
+    return result
+  } finally {
+    rmSync(extracted, { recursive: true, force: true })
+  }
+}
+
+/**
+ * Batch-install several candidates from one repo preview. The tarball is
+ * downloaded and extracted exactly once; each candidate installs
+ * independently and conflicts/skips are reported per skill, so a partial
+ * selection never blocks the rest.
+ */
+export async function installCandidates(
+  host: SkillsHost,
+  preview: InstallPreview,
+  candidates: InstallCandidate[],
+  rootLabel: '~/.agents/skills' | '~/.dsh/skills',
+  signal?: AbortSignal,
+): Promise<{ ok: true; installed: Array<{ name: string }>; skipped: Array<{ name: string; error: string }> } | { ok: false; error: string }> {
+  if (candidates.length === 0) return { ok: false, error: 'no candidates selected' }
+  const buffer = await fetchRepoTarball(host, preview.target, signal)
+  const extracted = await extractTarball(buffer)
+  const lock = readSkillLock(host) ?? {}
+  const installed: Array<{ name: string }> = []
+  const skipped: Array<{ name: string; error: string }> = []
+  try {
+    for (const candidate of candidates) {
+      const result = await installOneFromExtracted(host, extracted, preview, candidate, rootLabel, lock)
+      if (result.ok) installed.push({ name: result.name })
+      else skipped.push({ name: candidate.name, error: result.error })
+    }
+  } finally {
+    rmSync(extracted, { recursive: true, force: true })
+  }
+  if (installed.length > 0) writeSkillLock(host, lock)
+  return { ok: true, installed, skipped }
 }
 
 /** Check one managed skill for updates (tarball hash comparison). */

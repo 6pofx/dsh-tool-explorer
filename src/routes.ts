@@ -26,7 +26,7 @@ import {
   emptyTrash, listTrash, purgeTrashItem, restoreTrashItem, trashSkill,
 } from './skills-trash.js'
 import {
-  checkSkillUpdate, installCandidate, previewInstall,
+  checkSkillUpdate, installCandidate, installCandidates, previewInstall,
   updateSkillFromSource, type InstallCandidate, type InstallPreview,
 } from './skills-install.js'
 import type { ToolExplorerSettings } from './settings.js'
@@ -762,25 +762,55 @@ async function handleInstallSkill(host: ToolExplorerHost, request: IncomingMessa
   try {
     const body = await readJsonBody(request) as Record<string, unknown>
     const target = body.target as { owner?: unknown; repo?: unknown; branch?: unknown; path?: unknown } | undefined
-    const candidate = body.candidate as InstallCandidate | undefined
     if (target === undefined || typeof target.owner !== 'string' || typeof target.repo !== 'string') {
       sendJson(response, 400, { error: 'target is required (owner/repo from the preview)' })
       return
     }
-    if (candidate === undefined || typeof candidate.name !== 'string' || typeof candidate.skillPath !== 'string') {
-      sendJson(response, 400, { error: 'candidate is required (from the preview)' })
+    // Accept a batch (`candidates`) or the legacy single `candidate` shape.
+    const candidates: InstallCandidate[] = []
+    const skippedInput: Array<{ name: string; error: string }> = []
+    const rawList = Array.isArray(body.candidates)
+      ? body.candidates
+      : (typeof body.candidate === 'object' && body.candidate !== null ? [body.candidate] : [])
+    for (const item of rawList) {
+      const record = item as Record<string, unknown>
+      if (typeof record?.name === 'string' && typeof record?.skillPath === 'string') {
+        candidates.push(record as unknown as InstallCandidate)
+      } else {
+        skippedInput.push({ name: typeof record?.name === 'string' ? record.name : '?', error: 'invalid candidate' })
+      }
+    }
+    if (candidates.length === 0) {
+      const message = skippedInput.length > 0
+        ? `no valid candidates (${skippedInput.map(item => item.name).join(', ')})`
+        : 'at least one candidate is required (from the preview)'
+      sendJson(response, 400, { error: message })
       return
     }
     const sourceUrl = typeof body.sourceUrl === 'string' ? body.sourceUrl : `https://github.com/${target.owner}/${target.repo}.git`
-    const preview: InstallPreview = { target: { owner: target.owner, repo: target.repo, ...(typeof target.branch === 'string' && target.branch !== '' ? { branch: target.branch } : {}), ...(typeof target.path === 'string' && target.path !== '' ? { path: target.path } : {}) }, sourceUrl, candidates: [candidate] }
+    const preview: InstallPreview = { target: { owner: target.owner, repo: target.repo, ...(typeof target.branch === 'string' && target.branch !== '' ? { branch: target.branch } : {}), ...(typeof target.path === 'string' && target.path !== '' ? { path: target.path } : {}) }, sourceUrl, candidates }
     const root = body.root === '~/.dsh/skills' ? '~/.dsh/skills' : '~/.agents/skills'
-    const result = await installCandidate(host, preview, candidate, root)
+    const result = await installCandidates(host, preview, candidates, root)
     if (!result.ok) {
       sendJson(response, 409, { error: result.error })
       return
     }
     invalidateSkillCache()
-    sendJson(response, 200, { ok: true, ...await listSkills(host) })
+    if (result.installed.length === 0) {
+      // Everything failed (e.g. one already-installed repo skill): keep the
+      // 409 contract with the per-candidate details in the payload.
+      sendJson(response, 409, {
+        error: result.skipped.map(item => `${item.name}: ${item.error}`).join('\n'),
+        skipped: result.skipped,
+      })
+      return
+    }
+    sendJson(response, 200, {
+      ok: true,
+      installed: result.installed,
+      skipped: [...skippedInput, ...result.skipped],
+      ...await listSkills(host),
+    })
   } catch (error) {
     sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
   }
