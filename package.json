@@ -1,6 +1,6 @@
 {
   "name": "dsh-tool-explorer",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "Management console for DeepSeek Harness: browse, install, update, edit and toggle skills; add, edit, test and monitor MCP servers. · DSH 技能与 MCP 管理控制台。",
   "type": "module",
   "main": "lib/index.js",

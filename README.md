@@ -16,7 +16,7 @@ Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - Search, detail preview, online create/edit (kebab-case validation, frontmatter form, Markdown body)
 - **Independent model / user invocation switches** — turn off the model call for a skill alone (`disable-model-invocation`) while keeping the `/` menu, or vice versa; both off = fully disabled
 - **Recoverable trash**: deleting a user-root skill moves it to `<dshHome>/skills-trash` (lock entry snapshotted); restore puts it back byte-identically, or purge / empty for permanent removal
-- Install from GitHub: URL parsing (`owner/repo`, tree paths, `#branch`), candidate preview, install into `~/.agents/skills` or `~/.dsh/skills`, update check/apply (backup + rollback), uninstall
+- Install from GitHub: URL parsing (`owner/repo`, tree paths, `#branch`), candidate preview with **multi-select / select-all batch install** (one repo = one tarball download, conflicts reported per skill), install into `~/.agents/skills` or `~/.dsh/skills`, update check/apply (backup + rollback), uninstall
 - `skillFolderHash` is byte-compatible with the Skills CLI (`npx skills`)
 
 **MCP**

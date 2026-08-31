@@ -16,7 +16,7 @@
 - 搜索、详情预览、在线新建/编辑（kebab-case 校验、frontmatter 表单、Markdown 正文）
 - **独立模型 / 用户调用开关**：可只关模型调用（`disable-model-invocation`，保留 `/` 菜单），也可只关用户调用；双关 = 完整禁用
 - **可恢复回收站**：删除用户根技能 → 移入 `<dshHome>/skills-trash`（锁文件条目快照存档）；还原可字节级恢复（含锁条目），永久删除/清空则彻底移除
-- GitHub 安装：URL 解析（`owner/repo`、tree 路径、`#branch`）、候选预览、安装到 `~/.agents/skills` 或 `~/.dsh/skills`、检查更新/应用（备份+回滚）、卸载
+- GitHub 安装：URL 解析（`owner/repo`、tree 路径、`#branch`）、候选预览、**多选/全选批量安装**（同一仓库仅下载一次 tarball，逐技能独立处理冲突，失败可重试）、安装到 `~/.agents/skills` 或 `~/.dsh/skills`、检查更新/应用（备份+回滚）、卸载
 - `skillFolderHash` 与 Skills CLI（`npx skills`）字节级兼容
 
 **MCP**

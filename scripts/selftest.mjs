@@ -587,6 +587,37 @@ const baseSpec = { serverName: 'echo', transport: 'stdio', command: process.exec
   })()
   check('lock hash matches independent CLI implementation', lockAfter.skills['alpha-skill']?.skillFolderHash === independentHash)
 
+  // --- multi-selection batch install (one tarball download) ---
+  const beta = preview.payload.preview.candidates.find((c) => c.name === 'beta-skill')
+  const multi = await call('/dsh-tool-explorer/api/skills/install', {
+    method: 'POST',
+    body: {
+      target: preview.payload.preview.target,
+      sourceUrl: preview.payload.preview.sourceUrl,
+      candidates: [alpha, beta],
+      root: '~/.agents/skills',
+    },
+  })
+  check('batch install: beta installed, alpha skipped as conflict', multi.status === 200
+    && multi.payload.installed.length === 1 && multi.payload.installed[0].name === 'beta-skill'
+    && multi.payload.skipped.length === 1 && multi.payload.skipped[0].name === 'alpha-skill'
+    && /already exists/i.test(multi.payload.skipped[0].error), JSON.stringify(multi.payload))
+  check('batch install wrote beta dir', existsSync(join(userSkillsRoot, 'beta-skill', 'SKILL.md')))
+  const lockMulti = JSON.parse(readFileSync(join(agentsHome, '.skill-lock.json'), 'utf8'))
+  check('batch install lock: beta added, alpha kept', lockMulti.skills['beta-skill'] !== undefined && lockMulti.skills['alpha-skill'] !== undefined)
+  check('batch install lock beta shape', lockMulti.skills['beta-skill']?.skillPath === 'skills/beta/SKILL.md')
+
+  const emptyBatch = await call('/dsh-tool-explorer/api/skills/install', {
+    method: 'POST',
+    body: { target: preview.payload.preview.target, sourceUrl: preview.payload.preview.sourceUrl, candidates: [], root: '~/.agents/skills' },
+  })
+  check('empty selection rejected (400)', emptyBatch.status === 400)
+  const badBatch = await call('/dsh-tool-explorer/api/skills/install', {
+    method: 'POST',
+    body: { target: preview.payload.preview.target, sourceUrl: preview.payload.preview.sourceUrl, candidates: [{ name: 'x' }], root: '~/.agents/skills' },
+  })
+  check('invalid candidate rejected (400)', badBatch.status === 400 && /no valid candidates/i.test(badBatch.payload.error))
+
   let checkRes = await call(`/dsh-tool-explorer/api/skills/alpha-skill/check`, { method: 'POST', body: {} })
   check('check sees no update (v1)', checkRes.status === 200 && checkRes.payload.updateAvailable === false)
   currentTarball = tarballV2
