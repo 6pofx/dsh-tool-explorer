@@ -13,6 +13,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, w
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { dump, load } from 'js-yaml'
+import { trashCountOf } from './skills-trash.js'
 
 /** The exact grammar the filesystem provider enforces (mirrors dsh-skill). */
 const SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u
@@ -117,7 +118,7 @@ export function userSkillRoots(host: SkillsHost): { source: 'user-agents' | 'use
   ]
 }
 
-function dshHomeOf(host: SkillsHost): string {
+export function dshHomeOf(host: SkillsHost): string {
   return host.dshHome ?? process.env.DSH_HOME ?? join(homedir(), '.dsh')
 }
 
@@ -207,7 +208,7 @@ export interface SkillListView {
 }
 
 /** Build the merged catalog view (cached; see invalidateSkillCache). */
-export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' }> {
+export async function listSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host'; trashCount: number }> {
   const key = `${agentsHomeOf(host)}\u0000${dshHomeOf(host)}`
   const cached = skillListCache.get(key)
   if (cached !== undefined && Date.now() - cached.at < SKILL_LIST_TTL_MS) {
@@ -224,9 +225,9 @@ export function invalidateSkillCache(): void {
 }
 
 const SKILL_LIST_TTL_MS = 15_000
-const skillListCache = new Map<string, { at: number; value: { skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' } }>()
+const skillListCache = new Map<string, { at: number; value: { skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host'; trashCount: number } }>()
 
-async function collectSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host' }> {
+async function collectSkills(host: SkillsHost): Promise<{ skills: SkillListView[]; complete: boolean; viewScope: 'agent' | 'host'; trashCount: number }> {
   const lock = readSkillLock(host) ?? {}
   const disk = new Map<string, { source: string; path: string }>()
   for (const root of userSkillRoots(host)) {
@@ -291,7 +292,7 @@ async function collectSkills(host: SkillsHost): Promise<{ skills: SkillListView[
     })
   }
   const skills = views.sort((a, b) => a.name.localeCompare(b.name))
-  return { skills, complete, viewScope: scope === undefined ? 'host' : 'agent' }
+  return { skills, complete, viewScope: scope === undefined ? 'host' : 'agent', trashCount: trashCountOf(host) }
 }
 
 /** Parsed frontmatter of a skill file. */
@@ -416,7 +417,7 @@ function atomicWrite(path: string, text: string): void {
 }
 
 /** True when a path lives under one of the user skill roots. */
-function userRootOf(host: SkillsHost, path: string): { source: string; root: string } | null {
+export function userRootOf(host: SkillsHost, path: string): { source: string; root: string } | null {
   for (const root of userSkillRoots(host)) {
     const normalized = root.path.replace(/[\\/]+$/u, '')
     if (path === normalized || path.startsWith(`${normalized}/`) || path.startsWith(`${normalized}\\`)) {
@@ -512,8 +513,49 @@ export function setSkillEnabled(host: SkillsHost, name: string, enabled: boolean
   return { ok: true }
 }
 
-/** Resolve the SKILL.md path for a name (registry → disk scan). */
-function diskPathFor(host: SkillsHost, name: string): string | null {
+/**
+ * Independent per-axis invocation control (M5): flip the model and/or user
+ * switch alone. `model: false` writes only `disable-model-invocation: true`
+ * (the skill disappears from the model catalog but stays in the `/` menu);
+ * `user: false` writes only `user-invocable: false`. Enabling removes the
+ * matching key and leaves the other axis untouched.
+ */
+export function setSkillInvocation(
+  host: SkillsHost,
+  name: string,
+  patch: { model?: boolean; user?: boolean },
+): { ok: true; changes: string[] } | { ok: false; error: string } {
+  if (patch.model === undefined && patch.user === undefined) {
+    return { ok: false, error: 'at least one of model/user must be provided' }
+  }
+  const path = diskPathFor(host, name)
+  if (path === null || userRootOf(host, path) === null) {
+    return { ok: false, error: `skill "${name}" is not editable (only user-root skills can be switched)` }
+  }
+  const parsed = readSkillFile(path)
+  if (parsed === null) return { ok: false, error: `could not parse ${path}` }
+  const frontmatter = parsed.frontmatter
+  const changes: string[] = []
+  if (patch.model !== undefined) {
+    if (patch.model) delete frontmatter['disable-model-invocation']
+    else frontmatter['disable-model-invocation'] = true
+    changes.push(`model:${patch.model ? 'on' : 'off'}`)
+  }
+  if (patch.user !== undefined) {
+    if (patch.user) delete frontmatter['user-invocable']
+    else frontmatter['user-invocable'] = false
+    changes.push(`user:${patch.user ? 'on' : 'off'}`)
+  }
+  atomicWrite(path, serializeSkillFile(frontmatter, parsed.body))
+  return { ok: true, changes }
+}
+
+/**
+ * Resolve the SKILL.md path for a name (registry → disk scan). Never follows
+ * the lock file, so a user-root skill left on disk after its lock entry was
+ * removed stays addressable (the trash/restore flow relies on this).
+ */
+export function diskPathFor(host: SkillsHost, name: string): string | null {
   for (const root of userSkillRoots(host)) {
     for (const [diskName, path] of scanRoot(root.path)) {
       if (diskName === name) return path

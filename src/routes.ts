@@ -20,10 +20,13 @@ import {
 import { normalizeServerName, scanAgentMcpSources } from './agents-mcp.js'
 import {
   agentScopeOf, createSkill, invalidateSkillCache, isSkillName, listSkills, readSkillFile, readSkillLock, setSkillEnabled,
-  updateSkill, type SkillsHost,
+  setSkillInvocation, updateSkill, type SkillsHost,
 } from './skills.js'
 import {
-  checkSkillUpdate, installCandidate, previewInstall, uninstallSkill,
+  emptyTrash, listTrash, purgeTrashItem, restoreTrashItem, trashSkill,
+} from './skills-trash.js'
+import {
+  checkSkillUpdate, installCandidate, previewInstall,
   updateSkillFromSource, type InstallCandidate, type InstallPreview,
 } from './skills-install.js'
 import type { ToolExplorerSettings } from './settings.js'
@@ -149,6 +152,7 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
         selfEntry: entries.some(entry => entry.options?.id === 'dsh-tool-explorer' || entry.options?.name === 'dsh-tool-explorer'),
         features: {
           mcp: true,
+          skills: true,
         },
         config: settings(),
       })
@@ -276,17 +280,58 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
   }))
 
   disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/trash',
+    handler: (request, response) => {
+      if (!requireMethod(request, response, ['GET'])) return
+      sendJson(response, 200, { ok: true, ...listTrash(host) })
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/trash/restore',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleTrashRestore(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/trash/purge',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleTrashPurge(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
+    kind: 'exact',
+    path: '/dsh-tool-explorer/api/skills/trash/empty',
+    handler: async (request, response) => {
+      if (!requireMethod(request, response, ['POST'])) return
+      if (!requireSameOrigin(request, response)) return
+      await handleTrashEmpty(host, request, response)
+    },
+  }))
+
+  disposers.push(host.webServer.register({
     kind: 'prefix',
     path: '/dsh-tool-explorer/api/skills',
     handler: async (request, response) => {
       const name = param(request, '/dsh-tool-explorer/api/skills')
-      if (name === '') {
+      if (name === '' || name === 'trash' || name.startsWith('trash/')) {
+        // '' and 'trash*' are exact routes above; never treat them as a skill name.
         sendJson(response, 404, { error: 'not found' })
         return
       }
       const action = name.endsWith('/toggle') ? 'toggle'
         : name.endsWith('/check') ? 'check'
         : name.endsWith('/update') ? 'update'
+        : name.endsWith('/invocation') ? 'invocation'
         : null
       const skillName = action === null ? name : name.slice(0, name.length - `/${action}`.length)
       if (request.method === 'GET' && action === null) {
@@ -300,12 +345,17 @@ export function mountRoutes(host: ToolExplorerHost, settings: () => ToolExplorer
       }
       if (request.method === 'DELETE' && action === null) {
         if (!requireSameOrigin(request, response)) return
-        handleUninstallSkill(host, request, response, skillName)
+        await handleDeleteSkill(host, request, response, skillName)
         return
       }
       if (action === 'toggle' && request.method === 'POST') {
         if (!requireSameOrigin(request, response)) return
         await handleToggleSkill(host, request, response, skillName)
+        return
+      }
+      if (action === 'invocation' && request.method === 'POST') {
+        if (!requireSameOrigin(request, response)) return
+        await handleSetInvocation(host, request, response, skillName)
         return
       }
       if (action === 'check' && request.method === 'POST') {
@@ -625,6 +675,73 @@ async function handleToggleSkill(host: ToolExplorerHost, request: IncomingMessag
   }
 }
 
+async function handleSetInvocation(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const patch: { model?: boolean; user?: boolean } = {}
+    if (body.model !== undefined) patch.model = body.model === true
+    if (body.user !== undefined) patch.user = body.user === true
+    const result = setSkillInvocation(host, name, patch)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    invalidateSkillCache()
+    sendJson(response, 200, { ok: true, changes: result.changes, ...await listSkills(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+// --- skills trash (recoverable delete) ---
+
+async function handleDeleteSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): Promise<void> {
+  const result = trashSkill(host, name)
+  if (!result.ok) {
+    sendJson(response, 400, { error: result.error })
+    return
+  }
+  invalidateSkillCache()
+  const view = await listSkills(host)
+  sendJson(response, 200, { ok: true, trashed: { id: result.id }, ...view })
+}
+
+async function handleTrashRestore(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const id = typeof body.id === 'string' ? body.id : ''
+    const result = restoreTrashItem(host, id)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    invalidateSkillCache()
+    sendJson(response, 200, { ok: true, restored: result.name, ...await listSkills(host), ...listTrash(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleTrashPurge(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  try {
+    const body = await readJsonBody(request) as Record<string, unknown>
+    const id = typeof body.id === 'string' ? body.id : ''
+    const result = purgeTrashItem(host, id)
+    if (!result.ok) {
+      sendJson(response, 400, { error: result.error })
+      return
+    }
+    sendJson(response, 200, { ok: true, purged: result.name, ...listTrash(host) })
+  } catch (error) {
+    sendJson(response, 400, { error: error instanceof Error ? error.message : String(error) })
+  }
+}
+
+async function handleTrashEmpty(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
+  const result = emptyTrash(host)
+  sendJson(response, 200, { ok: true, purged: result.purged })
+}
+
 // --- skills install ecosystem ---
 
 async function handleInstallPreview(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse): Promise<void> {
@@ -694,15 +811,4 @@ async function handleUpdateSkillFromSource(host: ToolExplorerHost, request: Inco
   } catch (error) {
     sendJson(response, 502, { error: error instanceof Error ? error.message : String(error) })
   }
-}
-
-function handleUninstallSkill(host: ToolExplorerHost, request: IncomingMessage, response: ServerResponse, name: string): void {
-  const result = uninstallSkill(host, name)
-  if (!result.ok) {
-    sendJson(response, 400, { error: result.error })
-    return
-  }
-  invalidateSkillCache()
-  void listSkills(host).then(view => sendJson(response, 200, { ok: true, ...view }))
-    .catch(error => sendJson(response, 500, { error: error instanceof Error ? error.message : String(error) }))
 }
