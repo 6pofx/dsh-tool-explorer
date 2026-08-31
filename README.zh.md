@@ -2,6 +2,10 @@
 
 # dsh-tool-explorer
 
+[![npm version](https://img.shields.io/npm/v/dsh-tool-explorer)](https://www.npmjs.com/package/dsh-tool-explorer)
+[![npm downloads](https://img.shields.io/npm/dw/dsh-tool-explorer)](https://www.npmjs.com/package/dsh-tool-explorer)
+[![license](https://img.shields.io/npm/l/dsh-tool-explorer)](LICENSE)
+
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) 管理控制台：在 Web 设置页中**浏览、安装、更新、编辑与启停技能**，并**添加、编辑、启用/禁用、测试与监控 MCP 服务器**。
 
 ## 功能
@@ -21,6 +25,8 @@
 - 写入栅栏（expected-hash）：与手改配置并发安全
 
 ## 安装
+
+已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.3.0）：
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
@@ -72,6 +78,13 @@ node scripts/patch-mcp-client-async.mjs
 ```
 
 备份文件以 `index.js.*.bak` 形式保留在被修补文件旁。
+
+## 反馈
+
+问题、功能建议与官方沟通渠道：
+
+- 上文两个本地补丁已上报官方：见 [DeepSeek Harness Discussions #5129](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)——官方修复进展可以跟帖关注。
+- 其他与本插件相关的问题，请在本仓库发起 issue 或 discussion。
 
 ## 许可证
 

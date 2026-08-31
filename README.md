@@ -2,6 +2,10 @@ English | [中文](README.zh.md)
 
 # dsh-tool-explorer
 
+[![npm version](https://img.shields.io/npm/v/dsh-tool-explorer)](https://www.npmjs.com/package/dsh-tool-explorer)
+[![npm downloads](https://img.shields.io/npm/dw/dsh-tool-explorer)](https://www.npmjs.com/package/dsh-tool-explorer)
+[![license](https://img.shields.io/npm/l/dsh-tool-explorer)](LICENSE)
+
 Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): a Web settings page where you can **browse, install, update, edit and toggle skills**, and **add, edit, enable/disable, test and monitor MCP servers**.
 
 ## Features
@@ -21,6 +25,8 @@ Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 - Write fencing (expected-hash) against concurrent hand edits
 
 ## Install
+
+Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.3.0):
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
@@ -72,6 +78,13 @@ node scripts/patch-mcp-client-async.mjs
 ```
 
 Backups are written as `index.js.*.bak` next to the patched file.
+
+## Feedback
+
+Issues, feature requests and upstream discussions:
+
+- The two local patches above are reported upstream in [DeepSeek Harness Discussions #5129](https://github.com/deepseek-ai/deepseek-harness/discussions/5129) — follow it for the official fix.
+- For anything else about this plugin, open an issue or discussion in this repository.
 
 ## License
 
