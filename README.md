@@ -28,7 +28,7 @@ Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 ## Install
 
-Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.3.0):
+Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.0):
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer

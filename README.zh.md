@@ -28,7 +28,7 @@
 
 ## 安装
 
-已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.3.0）：
+已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.4.0）：
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
