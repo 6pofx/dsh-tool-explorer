@@ -25,9 +25,9 @@ and the default browser is never opened (`--no-open` was NOT passed). The server
 
 ### Environment
 
-- DSH `0.1.1-rc.2` (global npm install, Windows 11, Node 22)
-- `@deepseek-ai/dsh-mcp-client` `0.1.1-rc.2`
-- Reproduction with a `streamable-http` server whose endpoint is **down** (e.g. an IDE-published MCP endpoint `http://127.0.0.1:64342/stream` after the IDE is closed)
+- DSH `0.1.5-rc.2` (global npm install, Windows 11, Node 22); earlier reports on `0.1.1-rc.2`
+- `@deepseek-ai/dsh-mcp-client` `0.1.5-rc.2` (the gap is unchanged in this release)
+- Reproduction with a `streamable-http` server whose endpoint is **down** (e.g. an IDE-published MCP endpoint `http://127.0.0.1:64342/stream` after the IDE is closed), or a stdio server that never answers `initialize`
 
 ### Root cause (code-level)
 

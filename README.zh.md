@@ -8,6 +8,15 @@
 
 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (DSH) 管理控制台：在 Web 设置页中**浏览、安装、更新、编辑与启停技能**，并**添加、编辑、启用/禁用、测试与监控 MCP 服务器**。
 
+## 版本兼容
+
+| DSH | 状态 |
+|---|---|
+| `0.1.5-rc.2`（当前） | 已适配 —— 设置命名空间通过 `ctx.settings` provider（`SettingsProvider.installSection`）注册 |
+| `0.1.1-rc.2` 及更早 | 仍可加载运行：插件不再导入已被移除的符号；宿主若没有该方法则跳过设置文档层，直接使用组合条目里的配置 |
+
+host 半部改动需重启 `dsh web`，client 半部支持热更新。**dsh 升级后请重跑 [dsh-mcp-client 本地补丁](#dsh-mcp-client-本地补丁)** —— 升级会还原官方文件，两个症状会立刻复发。
+
 ## 功能
 
 **技能**
@@ -28,7 +37,7 @@
 
 ## 安装
 
-已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.4.1）：
+已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.4.2）：
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
@@ -42,7 +51,7 @@ dsh plugin --profile web add dsh-tool-explorer
 pnpm install
 pnpm run typecheck   # host + client 源码类型检查
 pnpm run build       # tsc host -> lib/，tsdown client -> client/client.js（含包装与校验）
-pnpm test:self       # 116+ 断言：mock host CRUD、跨 agent 导入、GitHub 安装、回收站、真实 stdio 探测
+pnpm test:self       # 122 条断言：mock host CRUD、跨 agent 导入、GitHub 安装、回收站、真实 stdio 探测
 ```
 
 本地安装循环：
@@ -50,7 +59,7 @@ pnpm test:self       # 116+ 断言：mock host CRUD、跨 agent 导入、GitHub 
 ```bash
 pnpm pack
 dsh plugin --profile web remove dsh-tool-explorer
-dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.4.0.tgz
+dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.4.2.tgz
 ```
 
 > ⚠️ 新增运行时依赖（如 `tar`）必须**重新打包并重装** —— 只拷贝 `lib/` 不够。
@@ -82,16 +91,35 @@ M5 功能集（来源分级浏览、独立调用开关、可恢复回收站）�
 
 ## dsh-mcp-client 本地补丁
 
-两个幂等补丁修复上游 dsh-mcp-client 的缺口（[已上报官方讨论](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)；每次 mcp-client 更新后需重跑——dshmarket 升级会还原官方文件）：
+两个幂等补丁修复上游 dsh-mcp-client 的缺口（[已上报官方讨论](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)）。**每次 dsh 升级后都要重跑** —— `npm`/`pnpm` 升级与 `dshmarket` 更新都会还原官方文件，两个症状随即复发：
 
 ```bash
-# 1) 静音 stdio 服务器 stderr（banner/JSON 日志曾刷爆 dsh web 输出）
+pnpm run patch:mcp          # 应用两个补丁（幂等）
+pnpm run patch:mcp:check    # 只检查不写文件；缺补丁时退出码为 2
+```
+
+| 补丁 | 修复的症状 |
+|---|---|
+| `startup-wait` | 服务器不可达/挂起时 `apply()` 会永远停在 `connection.ready`，`dsh web` 因此永不打印 `dsh web: http://…`、也不打开浏览器（就绪提示被 `loader.await()` 卡住）。等待被限制为有上限（默认 3 秒，可用 `DSH_MCP_STARTUP_TIMEOUT_MS` 覆盖，`0` 表示不限制）；连接转后台继续，工具到达时照常注册。 |
+| `stdio-stderr` | 每个 stdio 服务器的 stderr 都会继承进 dsh 控制台，FastMCP banner、pino JSON 日志、Python 报错会刷屏。补丁强制 `stderr: "ignore"`；调试服务器时可用 `DSH_MCP_STDERR=inherit` 恢复官方行为。 |
+
+参数：`--check`（只报告）、`--profile <名称>`（默认 `web`）、`--target <路径>`（只处理指定安装）。退出码：`0` 全部就位、`1` 未找到安装、`2` 有补丁待应用或写入失败。备份以 `index.js.*.bak` 保存在被修补文件旁；替换锚定官方原文，上游改动布局时会明确报错而不会写坏文件。
+
+单补丁入口（旧用法）仍保留：
+
+```bash
 node scripts/patch-mcp-client-stderr.mjs
-# 2) 限制启动等待（挂起/不可达的服务器曾阻塞就绪提示行）
 node scripts/patch-mcp-client-async.mjs
 ```
 
-备份文件以 `index.js.*.bak` 形式保留在被修补文件旁。
+### dsh 升级之后
+
+```bash
+pnpm run patch:mcp:check    # 退出码 2 = 升级已还原官方文件
+pnpm run patch:mcp          # 重新打补丁，然后重启 dsh
+```
+
+两个症状就是判断依据：控制台被服务器 banner/JSON 刷屏；`dsh web` 页面能用但始终不打印地址行。
 
 ## 反馈
 

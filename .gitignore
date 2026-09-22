@@ -21,3 +21,8 @@ Thumbs.db
 
 # Local tooling state (do not track)
 .zcode/
+
+# Local scratch: verification homes/logs, workspace-local package stores
+.tmp/
+.npm-cache/
+.pnpm-store/

@@ -8,6 +8,15 @@ English | [中文](README.zh.md)
 
 Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (dsh): a Web settings page where you can **browse, install, update, edit and toggle skills**, and **add, edit, enable/disable, test and monitor MCP servers**.
 
+## Compatibility
+
+| DSH | Status |
+|---|---|
+| `0.1.5-rc.2` (current) | Supported — settings register through the `ctx.settings` provider (`SettingsProvider.installSection`) |
+| `0.1.1-rc.2` and older | Loads and works; the plugin imports no removed symbol, and a host without that provider method simply keeps the composed entry config (the settings document layer is skipped) |
+
+Host-half changes need a `dsh web` restart; client-half changes hot-reload. After a **dsh upgrade**, re-run the [local mcp-client patches](#local-dsh-mcp-client-patches) — an upgrade restores the official `dsh-mcp-client` bytes.
+
 ## Features
 
 **Skills**
@@ -28,7 +37,7 @@ Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 ## Install
 
-Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.1):
+Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.2):
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
@@ -42,7 +51,7 @@ dsh plugin --profile web add dsh-tool-explorer
 pnpm install
 pnpm run typecheck   # tsc for host + client sources
 pnpm run build       # tsc host -> lib/, tsdown client -> client/client.js (wrapped + verified)
-pnpm test:self       # 116+ assertions: mock host CRUD, cross-agent import, git install, trash, real stdio probe
+pnpm test:self       # 122 assertions: mock host CRUD, cross-agent import, git install, trash, real stdio probe
 ```
 
 Local install loop:
@@ -50,7 +59,7 @@ Local install loop:
 ```bash
 pnpm pack
 dsh plugin --profile web remove dsh-tool-explorer
-dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.4.0.tgz
+dsh plugin --profile web add file:G:/dsh-tool-explorer/dsh-tool-explorer-0.4.2.tgz
 ```
 
 > Adding a runtime dependency (e.g. `tar`) requires a **re-pack + reinstall** — copying `lib/` alone is not enough.
@@ -82,16 +91,35 @@ Design notes: we keep the platform-documented frontmatter dual switches (`disabl
 
 ## Local dsh-mcp-client patches
 
-Two idempotent patches fix upstream dsh-mcp-client gaps until the official package gains config support ([reported upstream](https://github.com/deepseek-ai/deepseek-harness/discussions/5129); re-run after any mcp-client update — dshmarket upgrades restore the official files):
+Two idempotent patches close upstream `dsh-mcp-client` gaps until the official package gains config support ([reported upstream](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)). **Re-run them after every dsh upgrade** — `npm`/`pnpm` upgrades and `dshmarket` updates all restore the official file, and both symptoms come straight back:
 
 ```bash
-# 1) silence stdio server stderr (banners/JSON logs were flooding `dsh web` output)
+pnpm run patch:mcp          # apply both (idempotent)
+pnpm run patch:mcp:check    # report only; exit 2 when a patch is missing
+```
+
+| Patch | Symptom it fixes |
+|---|---|
+| `startup-wait` | A down or hanging MCP server leaves `apply()` awaiting `connection.ready` forever; `dsh web` then never prints `dsh web: http://…` and never opens the browser (`loader.await()` gates the announcement). The wait is bounded (3 s default, `DSH_MCP_STARTUP_TIMEOUT_MS` overrides, `0` disables); the connection keeps working in the background and its tools register when they arrive. |
+| `stdio-stderr` | Every stdio server inherits its stderr into the dsh console, so FastMCP banners, pino JSON lines and Python tracebacks flood `dsh web`. `stderr` is forced to `ignore`; `DSH_MCP_STDERR=inherit` restores the official behavior while debugging a server. |
+
+Options: `--check` (report only), `--profile <name>` (default `web`), `--target <path>` (patch one explicit install). Exit codes: `0` all in place, `1` no installation found, `2` a patch is pending or could not be written. Backups are written as `index.js.*.bak` next to the patched file, and each substitution is anchored to the exact official text — upstream layout changes are reported instead of corrupting the file.
+
+Individual entry points (single-patch workflow) remain:
+
+```bash
 node scripts/patch-mcp-client-stderr.mjs
-# 2) bound the startup wait (a hanging/unreachable server blocked the ready line)
 node scripts/patch-mcp-client-async.mjs
 ```
 
-Backups are written as `index.js.*.bak` next to the patched file.
+### After a dsh upgrade
+
+```bash
+pnpm run patch:mcp:check    # 2 = the upgrade restored the official file
+pnpm run patch:mcp          # re-apply, then restart dsh
+```
+
+The two symptoms are the tell-tale signs: a console flooded with server banners/JSON, and a `dsh web` that serves the UI but never prints its URL line.
 
 ## Feedback
 

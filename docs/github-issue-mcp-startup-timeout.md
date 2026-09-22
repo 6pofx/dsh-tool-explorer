@@ -25,9 +25,9 @@ and the default browser is never opened (`--no-open` was NOT passed). The server
 
 ### Environment
 
-- DSH `0.1.1-rc.2` (global npm install, Windows 11, Node 22)
-- `@deepseek-ai/dsh-mcp-client` `0.1.1-rc.2`
-- Reproduction with a `streamable-http` server whose endpoint is **down** (e.g. an IDE-published MCP endpoint `http://127.0.0.1:64342/stream` after the IDE is closed)
+- DSH `0.1.5-rc.2` (global npm install, Windows 11, Node 22); earlier reports on `0.1.1-rc.2`
+- `@deepseek-ai/dsh-mcp-client` `0.1.5-rc.2` (unchanged in this release)
+- Reproduction with a `streamable-http` server whose endpoint is **down** (e.g. an IDE-published MCP endpoint `http://127.0.0.1:64342/stream` after the IDE is closed), or a stdio server that never answers `initialize`
 
 ### Root cause (code-level)
 
@@ -67,7 +67,7 @@ All stdio servers inherit their stderr into the dsh process console (SDK default
 
 ### Note (reference implementation)
 
-In the meantime we bound the wait locally by racing `connection.ready` against a 3 s timeout in the installed package; tools still register when the connection eventually succeeds. Happy to upstream the approach if it fits.
+In the meantime we bound the wait locally by racing `connection.ready` against a timeout in the installed package; tools still register when the connection eventually succeeds, and `connectGeneration` never rejects, so the losing promise cannot surface as an unhandled rejection. Re-verified against 0.1.5-rc.2 with an isolated `dsh web` whose profile contains a stdio server that prints to stderr and never answers `initialize`: the `dsh web: http://…` line prints in ~19 s (the rest of the boot), the console shows none of that server's stderr, and the server keeps retrying in the background. Happy to upstream the approach if it fits.
 
 ---
 

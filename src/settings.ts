@@ -2,17 +2,26 @@
  * The plugin's own settings namespace: preferences shared by every feature
  * module (skill install target, MCP config layer, preview limits).
  *
- * Registered through `installSettingsSection` so a host with no settings
- * service (every dsh before 0.1.0-rc.7) simply keeps the composed entry
- * config as-is; the returned getter always returns a valid resolved value.
+ * DSH 0.1.5 removed the module-level `settingsNamespace` /
+ * `installSettingsSection` helpers (importing them made this plugin fail to
+ * load with `SyntaxError: The requested module '@deepseek-ai/dsh-settings' does
+ * not provide an export named 'installSettingsSection'`). The same capability is
+ * now an instance method on the `ctx.settings` provider
+ * ({@link SettingsProvider.installSection}), so this module imports TYPES ONLY
+ * and reaches the provider through `ctx.inject(['settings'])`.
+ *
+ * Degradation contract, unchanged from the pre-0.1.5 wiring: a host with no
+ * settings service — or one whose provider predates `installSection` — simply
+ * keeps the composed entry config as-is, and the returned getter always returns
+ * a valid resolved value.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import { installSettingsSection, settingsNamespace } from '@deepseek-ai/dsh-settings'
+import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
-/** Namespace the browser side keys its configuration card to. */
-export const TOOL_EXPLORER_SETTINGS_NS = settingsNamespace('dsh-tool-explorer')
+/** Namespace the settings document files this plugin's section under. */
+export const TOOL_EXPLORER_SETTINGS_NS = 'dsh-tool-explorer'
 
 /** Which skills root new installs and edits target by default. */
 export type SkillRoot = '~/.agents/skills' | '~/.dsh/skills'
@@ -46,20 +55,33 @@ export const TOOL_EXPLORER_SETTINGS_DEFAULTS: ToolExplorerSettings = {
 
 /**
  * Wire the namespace and hand back a live getter. The getter reflects user
- * overrides the moment they are committed (the settings service watches the
- * scope and re-points the source), so feature modules read fresh values
- * without subscribing themselves.
+ * overrides the moment they are committed (the provider re-points the source
+ * through `setSource`), so feature modules read fresh values without
+ * subscribing themselves.
+ *
+ * @param ctx - the plugin's own context; it owns the registration (the
+ *   provider drops the namespace when this fiber unloads).
+ * @param entry - the composition entry config, used as the provider's base
+ *   layer and as the fallback value when no provider is attached.
+ * @returns a thunk over the currently authoritative settings value.
  */
 export function installToolExplorerSettings(
   ctx: Context,
   entry: ToolExplorerSettings,
 ): () => ToolExplorerSettings {
   let source = (): ToolExplorerSettings => entry
-  installSettingsSection(ctx, TOOL_EXPLORER_SETTINGS_NS, ToolExplorerSettingsSchema, entry, {
-    setSource: (current) => {
-      source = current as () => ToolExplorerSettings
-    },
-    onChange: () => undefined,
+  ctx.inject(['settings'], (settingsCtx: Context) => {
+    // `settings` is typed by @deepseek-ai/dsh-settings' module augmentation, but
+    // a host that predates the provider API has neither the method nor the same
+    // service shape — feature-detect rather than assume.
+    const provider = settingsCtx.settings as SettingsProvider | undefined
+    if (provider === undefined || typeof provider.installSection !== 'function') return
+    provider.installSection(ctx, TOOL_EXPLORER_SETTINGS_NS, ToolExplorerSettingsSchema, entry, {
+      setSource: (current) => {
+        source = current as () => ToolExplorerSettings
+      },
+      onChange: () => undefined,
+    })
   })
   return () => source()
 }

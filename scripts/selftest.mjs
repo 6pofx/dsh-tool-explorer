@@ -684,5 +684,65 @@ await server.connect(transport)
 
 dispose()
 rmSync(tmp, { recursive: true, force: true })
+
+// ---------- 6. settings namespace wiring (DSH 0.1.5 provider API) ----------
+{
+  console.log('settings — namespace wiring')
+  const { installToolExplorerSettings, TOOL_EXPLORER_SETTINGS_NS } = await import(pathToFileURL(`${lib}/settings.js`).href)
+  const entry = { defaultSkillRoot: '~/.agents/skills', mcpConfigTarget: 'profile', previewContentLimit: 20000 }
+
+  /** Minimal cordis stand-in: capture the inject callback and expose a settings service. */
+  const fakeCtx = (settings) => {
+    const captured = { callbacks: 0, deps: null }
+    const ctx = {
+      settings,
+      inject(deps, callback) {
+        captured.callbacks += 1
+        captured.deps = deps
+        callback(ctx)
+      },
+    }
+    return { ctx, captured }
+  }
+
+  // A host without a settings service must never touch the settings API.
+  {
+    let injectedWithoutService = 0
+    const ctx = { get settings() { injectedWithoutService += 1; return undefined }, inject(_deps, cb) { cb(ctx) } }
+    const get = installToolExplorerSettings(ctx, entry)
+    check('no settings service: entry config still served', get() === entry)
+    check('no settings service: returned getter is live (not a snapshot)', get() !== undefined)
+  }
+
+  // A provider without installSection (pre-0.1.5 shape) degrades to the entry.
+  {
+    const { ctx } = fakeCtx({})
+    const get = installToolExplorerSettings(ctx, entry)
+    check('provider without installSection: entry config served', get() === entry)
+  }
+
+  // The 0.1.5 provider receives the namespace, schema, entry and hooks.
+  {
+    const calls = []
+    const provider = {
+      installSection(owner, ns, schema, base, hooks) {
+        calls.push({ owner, ns, schema, base, hooks })
+      },
+    }
+    const { ctx, captured } = fakeCtx(provider)
+    const get = installToolExplorerSettings(ctx, entry)
+    check('settings injected as a dependency', captured.callbacks === 1 && captured.deps?.[0] === 'settings')
+    check('installSection called once', calls.length === 1)
+    check('namespace is the plugin namespace', calls[0]?.ns === TOOL_EXPLORER_SETTINGS_NS)
+    check('composition entry rides as the base layer', calls[0]?.base === entry)
+    check('owner is the plugin context', calls[0]?.owner === ctx)
+    check('schema resolves the documented defaults', calls[0]?.schema?.(undefined)?.previewContentLimit === 20000)
+    check('entry config served before any commit', get() === entry)
+    const overridden = { defaultSkillRoot: '~/.dsh/skills', mcpConfigTarget: 'home', previewContentLimit: 4096 }
+    calls[0]?.hooks?.setSource(() => overridden)
+    check('committed settings supersede the entry config', get() === overridden)
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exit(1)
