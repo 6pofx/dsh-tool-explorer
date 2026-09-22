@@ -10,12 +10,16 @@
 
 ## 版本兼容
 
+**同一个版本同时支持所有受支持的 dsh 线。** 设置命名空间通过 `ctx.settings.register(ns, schema, { base })` 注册 —— 这是设置接口中**没有发生迁移**的那一部分（0.1.5 线删掉了旧的模块级 `settingsNamespace()` / `installSettingsSection()` 辅助函数，那正是过去导致本插件整体加载失败的原因）。区间两端都做了运行时实测。
+
 | DSH | 状态 |
 |---|---|
-| `0.1.5-rc.2`（当前） | 已适配 —— 设置命名空间通过 `ctx.settings` provider（`SettingsProvider.installSection`）注册 |
-| `0.1.1-rc.2` 及更早 | 仍可加载运行：插件不再导入已被移除的符号；宿主若没有该方法则跳过设置文档层，直接使用组合条目里的配置 |
+| `0.1.5-rc.2`（当前） | 支持 —— 启动、host 路由、设置、client bundle 均已运行时实测 |
+| `0.1.1-rc.2` | 支持 —— 同一组检查已在该版本上实测通过 |
+| `0.1.0-rc.7` … `0.1.4` 其余版本 | 预期可用：该线提供相同的 `ctx.settings.register(ns, schema, { base })` 接口 |
+| 宿主无 `ctx.settings` | 可正常加载运行；偏好项回退为组合条目中的配置 |
 
-host 半部改动需重启 `dsh web`，client 半部支持热更新。**dsh 升级后请重跑 [dsh-mcp-client 本地补丁](#dsh-mcp-client-本地补丁)** —— 升级会还原官方文件，两个症状会立刻复发。
+host 半部改动需重启 `dsh web`，client 半部支持热更新。**dsh 升级后请重跑 [dsh-mcp-client 本地补丁](#dsh-mcp-client-本地补丁)** —— 升级会还原官方文件。
 
 ## 功能
 
@@ -37,10 +41,16 @@ host 半部改动需重启 `dsh web`，client 半部支持热更新。**dsh 升�
 
 ## 安装
 
-已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.4.1；当前代码树为 0.4.2，尚未发布）：
+已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)：
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
+```
+
+不需要挑版本 —— 当前版本覆盖所有受支持的 dsh 线（见 [版本兼容](#版本兼容)）。0.1.5 之前的旧版本仍留在 npm 上可装，并打了 `legacy` dist-tag 便于固定；它只能在 DSH ≤ 0.1.4 上加载：
+
+```bash
+dsh plugin --profile web add dsh-tool-explorer@legacy   # = 0.4.1，仅 DSH ≤ 0.1.4
 ```
 
 `dsh plugin` 会自动 reconcile bundle。重启一次 `dsh web`（host 插件在启动时加载），打开 **设置 → Skills 和 MCP**。
@@ -51,7 +61,7 @@ dsh plugin --profile web add dsh-tool-explorer
 pnpm install
 pnpm run typecheck   # host + client 源码类型检查
 pnpm run build       # tsc host -> lib/，tsdown client -> client/client.js（含包装与校验）
-pnpm test:self       # 122 条断言：mock host CRUD、跨 agent 导入、GitHub 安装、回收站、真实 stdio 探测
+pnpm test:self       # 136 条断言：mock host CRUD、跨 agent 导入、GitHub 安装、回收站、真实 stdio 探测、设置装配
 ```
 
 本地安装循环：

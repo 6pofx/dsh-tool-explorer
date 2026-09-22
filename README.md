@@ -10,10 +10,14 @@ Management console for [DeepSeek Harness](https://github.com/deepseek-ai/deepsee
 
 ## Compatibility
 
+**One build serves every supported DSH line.** The settings namespace registers through `ctx.settings.register(ns, schema, { base })` — the part of the settings surface that did *not* move between releases (the 0.1.5 line dropped the older module-level `settingsNamespace()` / `installSettingsSection()` helpers, which is exactly what used to make this plugin fail to load). Verified at runtime against both ends of the range.
+
 | DSH | Status |
 |---|---|
-| `0.1.5-rc.2` (current) | Supported — settings register through the `ctx.settings` provider (`SettingsProvider.installSection`) |
-| `0.1.1-rc.2` and older | Loads and works; the plugin imports no removed symbol, and a host without that provider method simply keeps the composed entry config (the settings document layer is skipped) |
+| `0.1.5-rc.2` (current) | Supported — boot, host routes, settings and client bundle verified at runtime |
+| `0.1.1-rc.2` | Supported — the same checks verified at runtime on this release |
+| Rest of `0.1.0-rc.7` … `0.1.4` | Expected to work: this line exposes the same `ctx.settings.register(ns, schema, { base })` surface |
+| Host without `ctx.settings` | Loads and works; preferences fall back to the composition entry config |
 
 Host-half changes need a `dsh web` restart; client-half changes hot-reload. After a **dsh upgrade**, re-run the [local mcp-client patches](#local-dsh-mcp-client-patches) — an upgrade restores the official `dsh-mcp-client` bytes.
 
@@ -37,10 +41,18 @@ Host-half changes need a `dsh web` restart; client-half changes hot-reload. Afte
 
 ## Install
 
-Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.1; this tree is 0.4.2, unreleased):
+Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer):
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
+```
+
+There is no version to pick — the current release covers every supported DSH line
+(see [Compatibility](#compatibility)). The pre-0.1.5 build stays available for
+pinning and is published under the `legacy` dist-tag; it only loads on DSH ≤ 0.1.4:
+
+```bash
+dsh plugin --profile web add dsh-tool-explorer@legacy   # = 0.4.1, DSH ≤ 0.1.4 only
 ```
 
 `dsh plugin` reconciles the bundle automatically. Restart `dsh web` once (host plugins load at boot), then open **Settings → Skills 和 MCP**.
@@ -51,7 +63,7 @@ dsh plugin --profile web add dsh-tool-explorer
 pnpm install
 pnpm run typecheck   # tsc for host + client sources
 pnpm run build       # tsc host -> lib/, tsdown client -> client/client.js (wrapped + verified)
-pnpm test:self       # 122 assertions: mock host CRUD, cross-agent import, git install, trash, real stdio probe
+pnpm test:self       # 136 assertions: mock host CRUD, cross-agent import, git install, trash, real stdio probe, settings wiring
 ```
 
 Local install loop:
