@@ -26,3 +26,6 @@ Thumbs.db
 .tmp/
 .npm-cache/
 .pnpm-store/
+
+# A repository-local npmrc may carry a publish token; never commit it
+.npmrc
