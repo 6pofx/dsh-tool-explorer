@@ -41,7 +41,7 @@ host 半部改动需重启 `dsh web`，client 半部支持热更新。**dsh 升�
 
 ## 安装
 
-已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)：
+已发布到 [npm](https://www.npmjs.com/package/dsh-tool-explorer)（v0.4.2）：
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
