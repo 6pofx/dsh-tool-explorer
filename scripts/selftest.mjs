@@ -685,17 +685,38 @@ await server.connect(transport)
 dispose()
 rmSync(tmp, { recursive: true, force: true })
 
-// ---------- 6. settings namespace wiring (DSH 0.1.5 provider API) ----------
+// ---------- 6. settings namespace wiring (cross-version provider API) ----------
 {
   console.log('settings — namespace wiring')
   const { installToolExplorerSettings, TOOL_EXPLORER_SETTINGS_NS } = await import(pathToFileURL(`${lib}/settings.js`).href)
   const entry = { defaultSkillRoot: '~/.agents/skills', mcpConfigTarget: 'profile', previewContentLimit: 20000 }
+  const overridden = { defaultSkillRoot: '~/.dsh/skills', mcpConfigTarget: 'home', previewContentLimit: 4096 }
 
-  /** Minimal cordis stand-in: capture the inject callback and expose a settings service. */
-  const fakeCtx = (settings) => {
-    const captured = { callbacks: 0, deps: null }
+  /**
+   * Minimal cordis stand-in. `register` mirrors the surface BOTH settings-API
+   * generations share — the old module-level `installSettingsSection()` called
+   * exactly `sctx.settings.register(ns, schema, { base })` and read `scope.get()`
+   * (see @deepseek-ai/dsh-settings 0.1.1-rc.2, lib/index.js).
+   *
+   * @param settings - `undefined` for no service, `{}` for a provider without the
+   *   namespace registry, otherwise a `get()` implementation.
+   * @param withRegister - attach the shared `register` entry point.
+   */
+  const fakeCtx = (settings, { withRegister = true } = {}) => {
+    const captured = { callbacks: 0, deps: null, calls: [] }
+    let provider
+    if (settings !== undefined) {
+      provider = withRegister
+        ? {
+            register(ns, schema, options) {
+              captured.calls.push({ ns, schema, options })
+              return { get: settings.get }
+            },
+          }
+        : {}
+    }
     const ctx = {
-      settings,
+      settings: provider,
       inject(deps, callback) {
         captured.callbacks += 1
         captured.deps = deps
@@ -705,42 +726,55 @@ rmSync(tmp, { recursive: true, force: true })
     return { ctx, captured }
   }
 
-  // A host without a settings service must never touch the settings API.
+  // A host with no settings service at all keeps the composed entry config.
   {
-    let injectedWithoutService = 0
-    const ctx = { get settings() { injectedWithoutService += 1; return undefined }, inject(_deps, cb) { cb(ctx) } }
+    const { ctx, captured } = fakeCtx(undefined)
     const get = installToolExplorerSettings(ctx, entry)
-    check('no settings service: entry config still served', get() === entry)
-    check('no settings service: returned getter is live (not a snapshot)', get() !== undefined)
+    check('no settings service: entry config served', get() === entry)
+    check('no settings service: nothing registered', captured.calls.length === 0)
   }
 
-  // A provider without installSection (pre-0.1.5 shape) degrades to the entry.
+  // A provider without the namespace registry (older/unknown shape) is left alone.
   {
-    const { ctx } = fakeCtx({})
+    const { ctx, captured } = fakeCtx({}, { withRegister: false })
     const get = installToolExplorerSettings(ctx, entry)
-    check('provider without installSection: entry config served', get() === entry)
+    check('provider without register: entry config served', get() === entry)
+    check('provider without register: nothing registered', captured.calls.length === 0)
   }
 
-  // The 0.1.5 provider receives the namespace, schema, entry and hooks.
+  // The shared surface: register(ns, schema, { base }) — identical in
+  // 0.1.1-rc.2 and 0.1.5-rc.2, and the reason one build serves both DSH lines.
   {
-    const calls = []
-    const provider = {
-      installSection(owner, ns, schema, base, hooks) {
-        calls.push({ owner, ns, schema, base, hooks })
-      },
-    }
-    const { ctx, captured } = fakeCtx(provider)
+    const { ctx, captured } = fakeCtx({ get: () => entry })
     const get = installToolExplorerSettings(ctx, entry)
     check('settings injected as a dependency', captured.callbacks === 1 && captured.deps?.[0] === 'settings')
-    check('installSection called once', calls.length === 1)
-    check('namespace is the plugin namespace', calls[0]?.ns === TOOL_EXPLORER_SETTINGS_NS)
-    check('composition entry rides as the base layer', calls[0]?.base === entry)
-    check('owner is the plugin context', calls[0]?.owner === ctx)
-    check('schema resolves the documented defaults', calls[0]?.schema?.(undefined)?.previewContentLimit === 20000)
+    check('register called exactly once', captured.calls.length === 1)
+    check('namespace is the plugin namespace', captured.calls[0]?.ns === TOOL_EXPLORER_SETTINGS_NS)
+    check('composition entry rides as the base layer', captured.calls[0]?.options?.base === entry)
+    check(
+      'schema resolves the documented defaults',
+      captured.calls[0]?.schema?.(undefined)?.previewContentLimit === 20000,
+    )
+    check('resolved value is what the getter serves', get() === entry)
+  }
+
+  // The value is re-read per call, so a committed override is observed without
+  // any subscription (routes call the getter once per request).
+  {
+    let current = entry
+    const { ctx } = fakeCtx({ get: () => current })
+    const get = installToolExplorerSettings(ctx, entry)
     check('entry config served before any commit', get() === entry)
-    const overridden = { defaultSkillRoot: '~/.dsh/skills', mcpConfigTarget: 'home', previewContentLimit: 4096 }
-    calls[0]?.hooks?.setSource(() => overridden)
-    check('committed settings supersede the entry config', get() === overridden)
+    current = overridden
+    check('a committed value supersedes the entry config', get() === overridden)
+  }
+
+  // A scope torn down with its fiber must not break a request that arrives after.
+  {
+    const { ctx, captured } = fakeCtx({ get: () => { throw new Error('settings: scope disposed') } })
+    const get = installToolExplorerSettings(ctx, entry)
+    check('disposed scope falls back to the entry config', get() === entry)
+    check('disposed scope still registered exactly once', captured.calls.length === 1)
   }
 }
 

@@ -2,22 +2,24 @@
  * The plugin's own settings namespace: preferences shared by every feature
  * module (skill install target, MCP config layer, preview limits).
  *
- * DSH 0.1.5 removed the module-level `settingsNamespace` /
- * `installSettingsSection` helpers (importing them made this plugin fail to
- * load with `SyntaxError: The requested module '@deepseek-ai/dsh-settings' does
- * not provide an export named 'installSettingsSection'`). The same capability is
- * now an instance method on the `ctx.settings` provider
- * ({@link SettingsProvider.installSection}), so this module imports TYPES ONLY
- * and reaches the provider through `ctx.inject(['settings'])`.
+ * CROSS-VERSION CONTRACT. The settings API moved twice around this plugin:
+ * `0.1.0-rc.7 … 0.1.4` exposed module-level `settingsNamespace()` +
+ * `installSettingsSection()`, and `0.1.5` replaced them with the provider method
+ * `SettingsProvider.installSection()`. Importing either helper makes the plugin
+ * fail to load on the other release — the 0.1.5 removal of those exports is
+ * exactly what disabled this plugin
+ * (`SyntaxError: … does not provide an export named 'installSettingsSection'`).
  *
- * Degradation contract, unchanged from the pre-0.1.5 wiring: a host with no
- * settings service — or one whose provider predates `installSection` — simply
- * keeps the composed entry config as-is, and the returned getter always returns
- * a valid resolved value.
+ * So this module imports TYPES ONLY and registers through the part of the
+ * surface that did NOT move: `ctx.settings.register(ns, schema, { base })`,
+ * which takes identical arguments and returns an identical `scope.get()` in both
+ * lines. The composition entry rides as the `base` layer, so a host whose
+ * provider predates `register` (or has no settings service at all) keeps the
+ * entry config unchanged — the same degradation the old helper provided.
  */
 
 import type { Context } from '@deepseek-ai/cordis'
-import type { SettingsProvider } from '@deepseek-ai/dsh-settings'
+import type { SettingsProvider, SettingsScope } from '@deepseek-ai/dsh-settings'
 import z from '@deepseek-ai/schemastery'
 
 /** Namespace the settings document files this plugin's section under. */
@@ -54,13 +56,33 @@ export const TOOL_EXPLORER_SETTINGS_DEFAULTS: ToolExplorerSettings = {
 }
 
 /**
- * Wire the namespace and hand back a live getter. The getter reflects user
- * overrides the moment they are committed (the provider re-points the source
- * through `setSource`), so feature modules read fresh values without
- * subscribing themselves.
+ * Read one resolved settings value, falling back to the composition entry when
+ * the scope is no longer readable.
  *
- * @param ctx - the plugin's own context; it owns the registration (the
- *   provider drops the namespace when this fiber unloads).
+ * A registered scope is torn down with its fiber; a request that arrives after
+ * that must not fail, and a provider that detaches mid-session must degrade to
+ * the entry config instead of throwing on every route — the fallback the
+ * removed `installSettingsSection` helper used to install.
+ *
+ * @param scope - the scope the provider resolved for this namespace.
+ * @param entry - the composition entry config used as the fallback value.
+ * @returns the resolved settings, or the entry config.
+ */
+function readScope(scope: SettingsScope<ToolExplorerSettings>, entry: ToolExplorerSettings): ToolExplorerSettings {
+  try {
+    return scope.get()
+  } catch {
+    return entry
+  }
+}
+
+/**
+ * Wire the namespace and hand back a live getter. The getter reflects user
+ * overrides the moment they are committed (the provider re-resolves the
+ * namespace), so feature modules read fresh values without subscribing.
+ *
+ * @param ctx - the plugin's own context; it owns the registration (the provider
+ *   drops the namespace when this fiber unloads).
  * @param entry - the composition entry config, used as the provider's base
  *   layer and as the fallback value when no provider is attached.
  * @returns a thunk over the currently authoritative settings value.
@@ -72,16 +94,12 @@ export function installToolExplorerSettings(
   let source = (): ToolExplorerSettings => entry
   ctx.inject(['settings'], (settingsCtx: Context) => {
     // `settings` is typed by @deepseek-ai/dsh-settings' module augmentation, but
-    // a host that predates the provider API has neither the method nor the same
-    // service shape — feature-detect rather than assume.
+    // an older or partial host may expose no service, or one without the
+    // namespace registry — feature-detect rather than assume.
     const provider = settingsCtx.settings as SettingsProvider | undefined
-    if (provider === undefined || typeof provider.installSection !== 'function') return
-    provider.installSection(ctx, TOOL_EXPLORER_SETTINGS_NS, ToolExplorerSettingsSchema, entry, {
-      setSource: (current) => {
-        source = current as () => ToolExplorerSettings
-      },
-      onChange: () => undefined,
-    })
+    if (provider === undefined || typeof provider.register !== 'function') return
+    const scope = provider.register(TOOL_EXPLORER_SETTINGS_NS, ToolExplorerSettingsSchema, { base: entry })
+    source = () => readScope(scope, entry)
   })
   return () => source()
 }
