@@ -99,15 +99,21 @@ Design notes: we keep the platform-documented frontmatter dual switches (`disabl
 | `src/skills-install.ts` | GitHub install ecosystem: tarball fetch (regional proxy), candidate discovery, lock v3, CLI-compatible folder hash |
 | `src/agents-mcp.ts` | Cross-agent MCP import (JSON + Codex TOML subset parser) |
 | `src/patch-text.ts` | Patch-layer dialect: parse (`!!js` tolerant), surgical row edits, `[]` placeholder handling, atomic writes |
-| `scripts/` | Client bundle wrapper/check, self-test, and **local dsh-mcp-client patches** (see below) |
+| `scripts/` | Client bundle wrapper/check, self-test, and **local dsh-mcp-client patches** (see below; the patch tooling also ships in the npm package) |
 
 ## Local dsh-mcp-client patches
 
 Two idempotent patches close upstream `dsh-mcp-client` gaps until the official package gains config support ([reported upstream](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)). **Re-run them after every dsh upgrade** — `npm`/`pnpm` upgrades and `dshmarket` updates all restore the official file, and both symptoms come straight back:
 
 ```bash
-pnpm run patch:mcp          # apply both (idempotent)
+pnpm run patch:mcp          # from a repository checkout
 pnpm run patch:mcp:check    # report only; exit 2 when a patch is missing
+```
+
+Installed from npm instead? The tooling ships inside the package, so point `node` at it (it finds the profile's `dsh-mcp-client` on its own):
+
+```bash
+node "$DSH_HOME/profiles/web/node_modules/dsh-tool-explorer/scripts/patch-mcp-client.mjs"
 ```
 
 | Patch | Symptom it fixes |

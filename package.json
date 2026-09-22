@@ -49,7 +49,12 @@
     "cordis.patch.yml",
     "LICENSE",
     "README.md",
-    "README.zh.md"
+    "README.zh.md",
+    "scripts/mcp-client-patch.mjs",
+    "scripts/mcp-client-patches.mjs",
+    "scripts/patch-mcp-client.mjs",
+    "scripts/patch-mcp-client-async.mjs",
+    "scripts/patch-mcp-client-stderr.mjs"
   ],
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.2",

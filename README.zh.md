@@ -97,15 +97,21 @@ M5 功能集（来源分级浏览、独立调用开关、可恢复回收站）�
 | `src/skills-install.ts` | GitHub 安装生态：tarball 下载（区域代理）、候选发现、锁文件 v3、CLI 兼容目录哈希 |
 | `src/agents-mcp.ts` | 跨 agent MCP 导入（JSON + Codex TOML 子集解析） |
 | `src/patch-text.ts` | patch 层方言：解析（`!!js` 容错）、行级手术编辑、`[]` 占位符处理、原子写 |
-| `scripts/` | client bundle 包装/校验、自测、以及 **dsh-mcp-client 本地补丁**（见下） |
+| `scripts/` | client bundle 包装/校验、自测、以及 **dsh-mcp-client 本地补丁**（见下；补丁工具随 npm 包一同发布） |
 
 ## dsh-mcp-client 本地补丁
 
 两个幂等补丁修复上游 dsh-mcp-client 的缺口（[已上报官方讨论](https://github.com/deepseek-ai/deepseek-harness/discussions/5129)）。**每次 dsh 升级后都要重跑** —— `npm`/`pnpm` 升级与 `dshmarket` 更新都会还原官方文件，两个症状随即复发：
 
 ```bash
-pnpm run patch:mcp          # 应用两个补丁（幂等）
+pnpm run patch:mcp          # 在仓库检出里执行
 pnpm run patch:mcp:check    # 只检查不写文件；缺补丁时退出码为 2
+```
+
+如果是从 npm 安装的（没有仓库检出），补丁工具随包发布，直接用 `node` 指向它即可（它会自己找到 profile 里的 `dsh-mcp-client`）：
+
+```bash
+node "$DSH_HOME/profiles/web/node_modules/dsh-tool-explorer/scripts/patch-mcp-client.mjs"
 ```
 
 | 补丁 | 修复的症状 |
