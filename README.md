@@ -37,7 +37,7 @@ Host-half changes need a `dsh web` restart; client-half changes hot-reload. Afte
 
 ## Install
 
-Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.2):
+Published on [npm](https://www.npmjs.com/package/dsh-tool-explorer) (v0.4.1; this tree is 0.4.2, unreleased):
 
 ```bash
 dsh plugin --profile web add dsh-tool-explorer
