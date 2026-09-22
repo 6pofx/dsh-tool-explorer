@@ -26,6 +26,15 @@ without being asked.
   2. publish to npm, manually
   3. `docs: mark X as released on npm` (README + README.zh.md), then an annotated
      tag `vX` on that commit
+- **Publishing details.** This machine's default registry is a mirror that cannot
+  accept publishes, so every publish command pins
+  `--registry=https://registry.npmjs.org`. The npm account has 2FA enabled: the
+  token in the user-level `~/.npmrc` must be a granular token created with
+  **Bypass two-factor authentication**, or every publish fails with `EOTP` and
+  needs a live one-time password. Verify with
+  `npm whoami --registry=https://registry.npmjs.org` before releasing. The token
+  never enters this repository (`~/.npmrc` is outside it; a repository-local
+  `.npmrc` is gitignored).
 
 ## Verify before claiming
 
